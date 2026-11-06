@@ -1,0 +1,457 @@
+#!/usr/bin/python3
+"""ASKus OS Welcome screen.
+
+Shown once at the start of every session (like the Tails Greeter):
+  * unlock or create the encrypted Persistent Storage on the USB stick
+  * see the Tor connection come up, add bridges, fix the clock
+  * optionally set an administration password for this session
+Privileged work is done by small root helpers in /usr/local/sbin via pkexec;
+they refuse to change anything once this screen has been closed.
+"""
+import subprocess
+import sys
+import json
+import datetime
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+PERSIST = "/usr/local/sbin/askus-persistence"
+ADMIN = "/usr/local/sbin/askus-admin"
+BRIDGES = "/usr/local/sbin/askus-bridges"
+LOGO = "/usr/share/icons/hicolor/256x256/apps/askus-logo.png"
+TOR_CHECK = ["curl", "-s", "-m", "15", "--socks5-hostname", "127.0.0.1:9050",
+             "https://check.torproject.org/api/ip"]
+
+CSS = b"""
+.hero-title { font-size: 26pt; font-weight: 800; letter-spacing: -0.5px; }
+.hero-sub   { font-size: 11pt; opacity: 0.7; }
+.start-btn  { padding: 10px 44px; font-size: 13pt; font-weight: 700; }
+.ok-icon    { color: #34d399; }
+"""
+
+
+def run_async(argv, stdin_text, callback):
+    """Run argv, feed stdin_text, call callback(ok, stdout, stderr) on the main loop."""
+    flags = (Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE
+             | Gio.SubprocessFlags.STDERR_PIPE)
+    try:
+        proc = Gio.Subprocess.new(argv, flags)
+    except GLib.Error as e:
+        callback(False, "", e.message)
+        return
+
+    def done(p, res):
+        try:
+            _, out, err = p.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            callback(False, "", e.message)
+            return
+        callback(p.get_successful(), out or "", (err or "").strip())
+
+    proc.communicate_utf8_async(stdin_text or "", None, done)
+
+
+def parse_kv(text):
+    d = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            d[k.strip()] = v.strip()
+    return d
+
+
+def clean_err(err):
+    for line in reversed(err.splitlines()):
+        if line.startswith("error:"):
+            return line[6:].strip().capitalize()
+    return err.splitlines()[-1] if err else "Something went wrong"
+
+
+class Welcome(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Welcome to ASKus OS")
+        self.set_default_size(640, 820)
+        self.finished = False
+        self.status = {}
+        self.tor_ok = False
+        self.tor_busy = False
+
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(title="ASKus OS", subtitle="Private · Amnesic · Yours"))
+        view.add_top_bar(header)
+
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24,
+                       margin_top=18, margin_bottom=28, margin_start=18, margin_end=18)
+
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
+        logo = Gtk.Image.new_from_file(LOGO)
+        logo.set_pixel_size(112)
+        hero.append(logo)
+        t = Gtk.Label(label="Welcome to ASKus OS")
+        t.add_css_class("hero-title")
+        hero.append(t)
+        s = Gtk.Label(label="Everything you do goes through Tor and is forgotten at shutdown —\n"
+                            "unless you save it in your encrypted Persistent Storage.",
+                      justify=Gtk.Justification.CENTER, wrap=True)
+        s.add_css_class("hero-sub")
+        hero.append(s)
+        page.append(hero)
+
+        # --- Persistent storage ---
+        self.persist_group = Adw.PreferencesGroup(title="Persistent Storage")
+        self.persist_rows = []
+        page.append(self.persist_group)
+
+        # --- Tor ---
+        tor_group = Adw.PreferencesGroup(title="Tor Network")
+        self.tor_row = Adw.ActionRow(title="Connecting to Tor…",
+                                     subtitle="This usually takes 10–60 seconds")
+        self.tor_row.add_prefix(Gtk.Image.new_from_icon_name("network-wireless-symbolic"))
+        self.tor_spinner = Adw.Spinner()
+        self.tor_row.add_suffix(self.tor_spinner)
+        tor_group.add(self.tor_row)
+
+        self.bridges_row = Adw.ExpanderRow(
+            title="Bridges", subtitle="Use these if Tor is blocked where you are")
+        self.bridges_row.add_prefix(Gtk.Image.new_from_icon_name("network-vpn-symbolic"))
+        tv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                         margin_top=10, margin_bottom=10, margin_start=12, margin_end=12)
+        hint = Gtk.Label(xalign=0, wrap=True,
+                         label="Paste bridge lines (one per line). Get bridges from "
+                               "bridges.torproject.org or by emailing bridges@torproject.org.")
+        hint.add_css_class("dim-label")
+        tv_box.append(hint)
+        self.bridge_text = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.CHAR,
+                                        top_margin=8, bottom_margin=8, left_margin=8, right_margin=8)
+        frame = Gtk.Frame()
+        sc = Gtk.ScrolledWindow(min_content_height=90)
+        sc.set_child(self.bridge_text)
+        frame.set_child(sc)
+        tv_box.append(frame)
+        btns = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        clear = Gtk.Button(label="Remove bridges")
+        clear.connect("clicked", self.on_bridges_clear)
+        save = Gtk.Button(label="Use bridges")
+        save.add_css_class("suggested-action")
+        save.connect("clicked", self.on_bridges_save)
+        btns.append(clear)
+        btns.append(save)
+        tv_box.append(btns)
+        self.bridges_row.add_row(tv_box)
+        tor_group.add(self.bridges_row)
+
+        self.clock_row = Adw.ActionRow(title="Clock (UTC)",
+                                       subtitle="Tor only works when the clock is correct")
+        self.clock_row.add_prefix(Gtk.Image.new_from_icon_name("preferences-system-time-symbolic"))
+        self.clock_label = Gtk.Label()
+        self.clock_label.add_css_class("monospace")
+        self.clock_row.add_suffix(self.clock_label)
+        set_time = Gtk.Button(label="Set…", valign=Gtk.Align.CENTER)
+        set_time.connect("clicked", self.on_set_time)
+        self.clock_row.add_suffix(set_time)
+        tor_group.add(self.clock_row)
+        page.append(tor_group)
+
+        # --- Admin ---
+        self.admin_group = Adw.PreferencesGroup(
+            title="Administration",
+            description="Off by default. Only enable it if you need to install software or change system settings.")
+        self.admin_row = Adw.ExpanderRow(title="Administration password", subtitle="Disabled")
+        self.admin_row.add_prefix(Gtk.Image.new_from_icon_name("dialog-password-symbolic"))
+        self.admin_pw1 = Adw.PasswordEntryRow(title="Password")
+        self.admin_pw2 = Adw.PasswordEntryRow(title="Confirm password")
+        apply_box = Gtk.Box(halign=Gtk.Align.END, margin_top=8, margin_bottom=8, margin_end=12)
+        self.admin_btn = Gtk.Button(label="Enable for this session")
+        self.admin_btn.add_css_class("suggested-action")
+        self.admin_btn.connect("clicked", self.on_admin)
+        apply_box.append(self.admin_btn)
+        self.admin_row.add_row(self.admin_pw1)
+        self.admin_row.add_row(self.admin_pw2)
+        self.admin_row.add_row(apply_box)
+        self.admin_group.add(self.admin_row)
+        page.append(self.admin_group)
+
+        # --- Start ---
+        self.start_btn = Gtk.Button(label="Start ASKus OS", halign=Gtk.Align.CENTER)
+        self.start_btn.add_css_class("suggested-action")
+        self.start_btn.add_css_class("pill")
+        self.start_btn.add_css_class("start-btn")
+        self.start_btn.connect("clicked", lambda *_: self.finish_and_close())
+        page.append(self.start_btn)
+
+        clamp = Adw.Clamp(maximum_size=600)
+        clamp.set_child(page)
+        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroller.set_child(clamp)
+        view.set_content(scroller)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+        self.connect("close-request", self.on_close_request)
+
+        self.tick_clock()
+        GLib.timeout_add_seconds(20, self.tick_clock)
+        self.check_tor()
+        GLib.timeout_add_seconds(5, self.check_tor)
+        self.refresh_status()
+
+    # ---------- helpers ----------
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
+
+    def tick_clock(self):
+        self.clock_label.set_label(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M"))
+        return True
+
+    def clear_persist_rows(self):
+        for r in self.persist_rows:
+            self.persist_group.remove(r)
+        self.persist_rows = []
+
+    def add_persist_row(self, row):
+        self.persist_group.add(row)
+        self.persist_rows.append(row)
+
+    # ---------- status ----------
+    def refresh_status(self):
+        run_async(["pkexec", PERSIST, "status"], "", self.on_status)
+
+    def on_status(self, ok, out, err):
+        self.status = parse_kv(out) if ok else {}
+        self.clear_persist_rows()
+        st = self.status
+        locked_screen = st.get("welcome") == "closed"
+
+        if locked_screen:
+            self.admin_group.set_sensitive(False)
+            self.bridges_row.set_sensitive(False)
+            self.start_btn.set_label("Close")
+
+        if not ok:
+            row = Adw.ActionRow(title="Could not check the USB stick", subtitle=clean_err(err))
+            row.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+            self.add_persist_row(row)
+            return
+
+        if st.get("medium") != "usb":
+            row = Adw.ActionRow(title="Not available",
+                                subtitle="Start ASKus OS from a USB stick to keep files between sessions.")
+            row.add_prefix(Gtk.Image.new_from_icon_name("drive-removable-media-symbolic"))
+            self.add_persist_row(row)
+            return
+
+        if st.get("unlocked") == "yes":
+            row = Adw.ActionRow(title="Unlocked",
+                                subtitle="Your Persistent folder, GnuPG keys, Electrum wallets, KeePassXC, "
+                                         "Wi‑Fi passwords and Tor bridges are being saved.")
+            ic = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+            ic.add_css_class("ok-icon")
+            row.add_prefix(ic)
+            self.add_persist_row(row)
+            return
+
+        if locked_screen:
+            row = Adw.ActionRow(title="Locked",
+                                subtitle="Restart ASKus OS to unlock your Persistent Storage.")
+            row.add_prefix(Gtk.Image.new_from_icon_name("system-lock-screen-symbolic"))
+            self.add_persist_row(row)
+            return
+
+        if st.get("volume", "none") != "none":
+            row = Adw.PasswordEntryRow(title="Enter passphrase to unlock")
+            row.set_show_apply_button(True)
+            row.add_prefix(Gtk.Image.new_from_icon_name("system-lock-screen-symbolic"))
+            row.connect("apply", self.on_unlock)
+            row.connect("entry-activated", self.on_unlock)
+            self.add_persist_row(row)
+            self.unlock_row = row
+            GLib.idle_add(row.grab_focus)
+            return
+
+        free_mb = int(st.get("free_mb", "0") or 0)
+        row = Adw.ActionRow(title="Create Persistent Storage")
+        row.add_prefix(Gtk.Image.new_from_icon_name("drive-harddisk-symbolic"))
+        btn = Gtk.Button(label="Create…", valign=Gtk.Align.CENTER)
+        btn.add_css_class("suggested-action")
+        if free_mb >= 1024:
+            row.set_subtitle(f"Encrypts the {free_mb / 1024:.1f} GB of free space on this USB stick (LUKS2)")
+            btn.connect("clicked", self.on_create_clicked)
+        else:
+            row.set_subtitle("There is not enough free space on this USB stick (needs 1 GB).")
+            btn.set_sensitive(False)
+        row.add_suffix(btn)
+        self.add_persist_row(row)
+
+    # ---------- persistence ----------
+    def busy_row(self, title):
+        self.clear_persist_rows()
+        row = Adw.ActionRow(title=title, subtitle="Please wait…")
+        row.add_suffix(Adw.Spinner())
+        self.add_persist_row(row)
+        self.start_btn.set_sensitive(False)
+
+    def on_unlock(self, row):
+        pw = row.get_text()
+        if not pw:
+            return
+        self.busy_row("Unlocking…")
+
+        def done(ok, out, err):
+            self.start_btn.set_sensitive(True)
+            self.toast("Persistent Storage unlocked" if ok else clean_err(err))
+            self.refresh_status()
+        run_async(["pkexec", PERSIST, "unlock"], pw + "\n", done)
+
+    def on_create_clicked(self, _btn):
+        dlg = Adw.AlertDialog(
+            heading="Create Persistent Storage",
+            body="Choose a strong passphrase. If you forget it, the data cannot be recovered.")
+        box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        box.add_css_class("boxed-list")
+        p1 = Adw.PasswordEntryRow(title="Passphrase")
+        p2 = Adw.PasswordEntryRow(title="Repeat passphrase")
+        box.append(p1)
+        box.append(p2)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("create", "Create")
+        dlg.set_response_appearance("create", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("create")
+
+        def resp(d, r):
+            if r != "create":
+                return
+            a, b = p1.get_text(), p2.get_text()
+            if len(a) < 8:
+                self.toast("Use at least 8 characters (a few random words is best)")
+                return
+            if a != b:
+                self.toast("The passphrases do not match")
+                return
+            self.busy_row("Creating encrypted storage…")
+
+            def done(ok, out, err):
+                self.start_btn.set_sensitive(True)
+                self.toast("Persistent Storage created and unlocked" if ok else clean_err(err))
+                self.refresh_status()
+            run_async(["pkexec", PERSIST, "create"], a + "\n", done)
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+    # ---------- Tor ----------
+    def check_tor(self):
+        if self.tor_ok:
+            return False
+        if self.tor_busy:
+            return True
+        self.tor_busy = True
+
+        def done(ok, out, err):
+            self.tor_busy = False
+            try:
+                data = json.loads(out) if ok and out else {}
+            except ValueError:
+                data = {}
+            if data.get("IsTor"):
+                self.tor_ok = True
+                self.tor_row.set_title("Connected to Tor")
+                self.tor_row.set_subtitle(f"Exit address seen by websites: {data.get('IP', '?')}")
+                self.tor_row.remove(self.tor_spinner)
+                ic = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+                ic.add_css_class("ok-icon")
+                self.tor_row.add_suffix(ic)
+        run_async(TOR_CHECK, "", done)
+        return True
+
+    def on_bridges_save(self, _btn):
+        buf = self.bridge_text.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+
+        def done(ok, out, err):
+            self.toast("Bridges saved — Tor is reconnecting" if ok else clean_err(err))
+        run_async(["pkexec", BRIDGES, "set"], text, done)
+
+    def on_bridges_clear(self, _btn):
+        run_async(["pkexec", BRIDGES, "clear"], "",
+                  lambda ok, o, e: self.toast("Bridges removed" if ok else clean_err(e)))
+
+    def on_set_time(self, _btn):
+        dlg = Adw.AlertDialog(heading="Set the clock (UTC)",
+                              body="Enter the current date and time in UTC, e.g. 2026-11-06 19:30")
+        entry = Gtk.Entry(text=self.clock_label.get_label(), activates_default=True)
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("set", "Set time")
+        dlg.set_response_appearance("set", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("set")
+
+        def resp(d, r):
+            if r == "set":
+                run_async(["pkexec", ADMIN, "set-time", entry.get_text().strip()], "",
+                          lambda ok, o, e: (self.tick_clock(),
+                                            self.toast("Clock updated" if ok else clean_err(e))))
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+    # ---------- admin ----------
+    def on_admin(self, _btn):
+        a, b = self.admin_pw1.get_text(), self.admin_pw2.get_text()
+        if len(a) < 6:
+            self.toast("Use at least 6 characters")
+            return
+        if a != b:
+            self.toast("The passwords do not match")
+            return
+
+        def done(ok, out, err):
+            if ok:
+                self.admin_row.set_subtitle("Enabled for this session (sudo and screen lock use it)")
+                self.admin_row.set_expanded(False)
+                self.admin_row.set_sensitive(False)
+                self.toast("Administration password set")
+            else:
+                self.toast(clean_err(err))
+        run_async(["pkexec", ADMIN, "set-password"], a + "\n", done)
+
+    # ---------- closing ----------
+    def finish_and_close(self):
+        self.finish_sync()
+        self.close()
+
+    def finish_sync(self):
+        if not self.finished:
+            self.finished = True
+            subprocess.run(["pkexec", PERSIST, "finish"], capture_output=True, timeout=30)
+
+    def on_close_request(self, *_):
+        self.finish_sync()
+        return False
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.Welcome",
+                         flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+
+    def do_command_line(self, cmdline):
+        self.activate()
+        return 0
+
+    def do_activate(self):
+        win = self.props.active_window
+        if not win:
+            prov = Gtk.CssProvider()
+            prov.load_from_string(CSS.decode())
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+            win = Welcome(self)
+        win.present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

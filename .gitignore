@@ -1,0 +1,26 @@
+# live-build output
+.build/
+cache/
+chroot/
+binary/
+*.iso
+*.sha256
+build.log
+config/binary
+config/bootstrap
+config/chroot
+config/common
+config/source
+config/bootloaders/
+# generated from branding/ at build time
+config/includes.chroot/usr/share/askus/png/
+config/includes.chroot/usr/share/askus/logo.svg
+config/includes.chroot/usr/share/backgrounds/askus/
+# rendered automatically during the build (branding/render.sh)
+branding/png/
+branding/logo-wordmark*.svg
+branding/wallpaper.svg
+branding/boot-splash.svg
+config/includes.chroot/usr/share/plymouth/themes/askus/*.png
+branding/logo.svg
+branding/logo-small.svg

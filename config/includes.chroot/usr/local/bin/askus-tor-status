@@ -1,0 +1,11 @@
+#!/bin/bash
+# Shows whether this computer is connected through Tor, and with which exit IP.
+R=$(curl -s -m 25 --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null)
+if echo "$R" | grep -q '"IsTor":true'; then
+  IP=$(echo "$R" | sed -n 's/.*"IP":"\([^"]*\)".*/\1/p')
+  zenity --info --icon=askus-logo --title="Tor Status" --width=360 \
+    --text="<big><b>✅  Connected to Tor</b></big>\n\nWebsites see the Tor exit address:\n<tt>$IP</tt>\n\nAll traffic from this computer is routed through Tor."
+else
+  zenity --warning --title="Tor Status" --width=380 \
+    --text="<big><b>⏳  Not connected to Tor yet</b></big>\n\nTor may still be starting. If it never connects:\n• check your Wi‑Fi / cable\n• make sure the clock is right (Welcome screen ▸ Set time)\n• use a bridge if Tor is blocked where you are"
+fi

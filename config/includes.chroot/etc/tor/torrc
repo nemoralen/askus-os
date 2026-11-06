@@ -1,0 +1,23 @@
+## ASKus OS — system Tor daemon. ALL network traffic is forced through this.
+## (Local edits: put extra settings in /etc/tor/torrc.d/*.conf — bridges live there.)
+Log notice syslog
+DataDirectory /var/lib/tor
+AvoidDiskWrites 1
+
+# SOCKS for Tor Browser, Electrum, torsocks (per-destination circuit isolation)
+SocksPort 127.0.0.1:9050 IsolateDestAddr IsolateDestPort
+SocksPort 127.0.0.1:9150 IsolateSOCKSAuth KeepAliveIsolateSOCKSAuth
+
+# Transparent proxy + DNS for every other application
+TransPort 127.0.0.1:9040 IsolateClientAddr IsolateClientProtocol IsolateDestAddr IsolateDestPort
+DNSPort 127.0.0.1:5353
+AutomapHostsOnResolve 1
+AutomapHostsSuffixes .onion,.exit
+VirtualAddrNetworkIPv4 10.192.0.0/10
+
+# Root-only control port (used by `sudo nyx`)
+ControlPort 127.0.0.1:9051
+CookieAuthentication 1
+
+ClientUseIPv6 0
+%include /etc/tor/torrc.d/*.conf

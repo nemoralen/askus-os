@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Electrum Bitcoin Wallet
+Comment=Lightweight Bitcoin wallet (connects through Tor)
+Exec=electrum --proxy socks5:127.0.0.1:9050 %u
+Icon=electrum
+Categories=Finance;Network;
+MimeType=x-scheme-handler/bitcoin;x-scheme-handler/lightning;
+StartupWMClass=electrum

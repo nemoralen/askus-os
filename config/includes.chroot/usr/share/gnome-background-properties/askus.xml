@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<wallpapers>
+  <wallpaper deleted="false">
+    <name>ASKus Nebula</name>
+    <filename>/usr/share/backgrounds/askus/askus-wallpaper.png</filename>
+    <filename-dark>/usr/share/backgrounds/askus/askus-wallpaper.png</filename-dark>
+    <options>zoom</options>
+  </wallpaper>
+</wallpapers>

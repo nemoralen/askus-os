@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Welcome
+Exec=/usr/local/bin/askus-welcome --autostart
+Icon=askus-logo
+X-GNOME-Autostart-Phase=Applications
+NoDisplay=true

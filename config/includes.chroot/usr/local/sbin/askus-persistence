@@ -1,0 +1,140 @@
+#!/bin/bash
+# ASKus OS — encrypted persistent storage on the boot USB (LUKS2 + ext4).
+#   status | create | unlock | lock | finish
+# Passphrases are read from stdin. create/unlock only work while the Welcome
+# screen is open (flag /run/askus/welcome-open), so apps can't use this later.
+set -euo pipefail
+
+LABEL=ASKusPersistence
+MAP=askus-persist
+MNT=/run/askus/persistence
+FLAG=/run/askus/welcome-open
+U=askus
+H=/home/$U
+
+# name : target : owner : mode
+FEATURES=(
+  "Persistent:$H/Persistent:user:0700"
+  "gnupg:$H/.gnupg:user:0700"
+  "electrum:$H/.electrum:user:0700"
+  "keepassxc:$H/.config/keepassxc:user:0700"
+  "ssh:$H/.ssh:user:0700"
+  "thunderbird:$H/.thunderbird:user:0700"
+  "network-connections:/etc/NetworkManager/system-connections:root:0700"
+  "tor-bridges:/etc/tor/torrc.d:root:0755"
+)
+
+die() { echo "error: $*" >&2; exit 1; }
+need_flag() { [ -e "$FLAG" ] || die "persistent storage can only be changed from the Welcome screen at startup"; }
+[ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
+
+boot_disk() {
+  local src pk
+  src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+  [ -n "$src" ] || return 1
+  case "$src" in /dev/sr*|/dev/loop*) return 1;; esac
+  pk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1)
+  [ -n "$pk" ] && echo "/dev/$pk"
+}
+
+find_volume() {
+  local disk=$1 p
+  for p in $(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{print $1}'); do
+    if [ "$(blkid -s TYPE -o value "$p" 2>/dev/null)" = crypto_LUKS ] &&
+       [ "$(blkid -s LABEL -o value "$p" 2>/dev/null)" = "$LABEL" ]; then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
+# Largest free region on the disk -> "start size" in 512-byte sectors (1 MiB aligned)
+free_region() {
+  sfdisk -F "$1" 2>/dev/null | awk '
+    /^ *[0-9]+ +[0-9]+ +[0-9]+ / { if ($3 > best) { best=$3; s=$1; e=$2 } }
+    END { if (best) { a=int((s+2047)/2048)*2048; if (e>a) print a, e-a+1; } }'
+}
+
+read_pass() { IFS= read -r PASS || true; [ ${#PASS} -ge 8 ] || die "passphrase must be at least 8 characters"; }
+
+bind_features() {
+  local f name target owner mode src
+  for f in "${FEATURES[@]}"; do
+    IFS=: read -r name target owner mode <<<"$f"
+    src="$MNT/$name"
+    mountpoint -q "$target" && continue
+    mkdir -p "$target"
+    if [ ! -d "$src" ]; then
+      mkdir -p "$src"
+      cp -a "$target/." "$src/" 2>/dev/null || true        # seed with current contents
+    fi
+    if [ "$owner" = user ]; then chown "$U:$U" "$src" "$target"; fi
+    chmod "$mode" "$src"
+    mount --bind "$src" "$target"
+  done
+  chown "$U:$U" "$H/.config" 2>/dev/null || true
+  systemctl try-restart tor@default.service tor.service 2>/dev/null || true
+  nmcli connection reload 2>/dev/null || true
+}
+
+open_and_mount() {
+  local part=$1
+  [ -e /dev/mapper/$MAP ] || printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" $MAP ||
+    die "wrong passphrase"
+  mkdir -p "$MNT"
+  mountpoint -q "$MNT" || { e2fsck -p /dev/mapper/$MAP >/dev/null 2>&1 || true
+    mount -o noatime,nodev,nosuid /dev/mapper/$MAP "$MNT"; }
+}
+
+cmd=${1:-status}
+case "$cmd" in
+  status)
+    disk=$(boot_disk || true)
+    if [ -z "$disk" ]; then echo "medium=none"; exit 0; fi
+    echo "medium=usb"; echo "disk=$disk"
+    if vol=$(find_volume "$disk"); then echo "volume=$vol"; else echo "volume=none"
+      read -r _ sz < <(free_region "$disk" || true) || true
+      echo "free_mb=$(( ${sz:-0} / 2048 ))"
+    fi
+    mountpoint -q "$MNT" && echo "unlocked=yes" || echo "unlocked=no"
+    [ -e "$FLAG" ] && echo "welcome=open" || echo "welcome=closed"
+    ;;
+  create)
+    need_flag
+    disk=$(boot_disk) || die "persistent storage needs ASKus OS to be started from a USB stick"
+    find_volume "$disk" >/dev/null && die "persistent storage already exists"
+    read_pass
+    read -r start size < <(free_region "$disk") || die "no free space on the USB stick"
+    [ "$size" -ge $((1024*2048)) ] || die "need at least 1 GB of free space on the USB stick"
+    before=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"' | wc -l)
+    echo "$start,$size,L" | sfdisk --append --force --no-reread --no-tell-kernel "$disk" >/dev/null
+    partx -a "$disk" 2>/dev/null || partx -u "$disk" 2>/dev/null || true
+    udevadm settle; sleep 1
+    after=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"' | wc -l)
+    [ "$after" -gt "$before" ] || die "the new partition did not appear; please restart and try again"
+    part=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{p=$1} END{print p}')
+    printf '%s' "$PASS" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf argon2id \
+        --label "$LABEL" --key-file=- "$part"
+    printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" $MAP
+    mkfs.ext4 -q -L askus-data -m 0 /dev/mapper/$MAP
+    mkdir -p "$MNT"; mount -o noatime,nodev,nosuid /dev/mapper/$MAP "$MNT"
+    bind_features
+    echo "created=$part"
+    ;;
+  unlock)
+    need_flag
+    disk=$(boot_disk) || die "not started from USB"
+    part=$(find_volume "$disk") || die "no persistent storage found on this USB stick"
+    read_pass
+    open_and_mount "$part"
+    bind_features
+    echo "unlocked=yes"
+    ;;
+  lock)
+    for f in "${FEATURES[@]}"; do IFS=: read -r _ target _ _ <<<"$f"; umount "$target" 2>/dev/null || true; done
+    umount "$MNT" 2>/dev/null || true
+    cryptsetup close $MAP 2>/dev/null || true
+    echo "unlocked=no"
+    ;;
+  finish)
+    rm -f "$FLAG"; echo "welcome=closed" ;;
+  *) die "usage: askus-persistence status|create|unlock|lock|finish" ;;
+esac

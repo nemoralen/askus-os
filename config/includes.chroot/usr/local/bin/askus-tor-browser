@@ -1,0 +1,9 @@
+#!/bin/bash
+# Launch the bundled Tor Browser against the system Tor daemon (no second Tor instance).
+export TOR_SKIP_LAUNCH=1 TOR_PROVIDER=none TOR_SKIP_CONTROLPORTTEST=1 TOR_NO_DISPLAY_NETWORK_SETTINGS=1
+export TOR_SOCKS_HOST=127.0.0.1 TOR_SOCKS_PORT=9150
+TB=/opt/tor-browser
+if [ ! -x "$TB/Browser/start-tor-browser" ]; then
+  zenity --error --title="Tor Browser" --text="Tor Browser is not installed in this image." ; exit 1
+fi
+cd "$TB" && exec ./Browser/start-tor-browser --detach "$@"

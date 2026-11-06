@@ -1,0 +1,10 @@
+[Unit]
+Description=ASKus OS: emergency power-off when the boot USB is pulled out
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/local/sbin/askus-usb-watchdog
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

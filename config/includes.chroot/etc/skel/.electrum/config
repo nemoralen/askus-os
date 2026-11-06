@@ -1,0 +1,11 @@
+{
+    "auto_connect": true,
+    "oneserver": false,
+    "proxy": "socks5:127.0.0.1:9050::",
+    "proxy_enabled": true,
+    "proxy_mode": "socks5",
+    "proxy_host": "127.0.0.1",
+    "proxy_port": "9050",
+    "check_updates": false,
+    "config_version": 3
+}

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=ASKus OS
+Description=ASKus OS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/askus
+ScriptFile=/usr/share/plymouth/themes/askus/askus.script

@@ -1,0 +1,27 @@
+#!/bin/bash
+# ASKus OS — session admin helpers.
+#   set-password   (stdin: password)  -> enables sudo for this session (Welcome screen only)
+#   set-time "YYYY-MM-DD HH:MM"       -> set the clock in UTC (Tor refuses to work with a wrong clock)
+set -euo pipefail
+FLAG=/run/askus/welcome-open
+die() { echo "error: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
+case "${1:-}" in
+  set-password)
+    [ -e "$FLAG" ] || die "the administration password can only be set from the Welcome screen"
+    IFS= read -r PW || true
+    [ ${#PW} -ge 6 ] || die "password must be at least 6 characters"
+    printf 'askus:%s\n' "$PW" | chpasswd
+    printf 'askus ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/askus-admin
+    chmod 0440 /etc/sudoers.d/askus-admin
+    usermod -aG sudo askus
+    echo "admin=enabled"
+    ;;
+  set-time)
+    [[ "${2:-}" =~ ^20[0-9]{2}-[01][0-9]-[0-3][0-9]\ [0-2][0-9]:[0-5][0-9]$ ]] || die "use the format YYYY-MM-DD HH:MM (UTC)"
+    date -u -s "$2" >/dev/null && hwclock --systohc --utc 2>/dev/null || true
+    systemctl try-restart tor@default.service tor.service 2>/dev/null || true
+    echo "time=$(date -u '+%Y-%m-%d %H:%M')"
+    ;;
+  *) die "usage: askus-admin set-password | set-time 'YYYY-MM-DD HH:MM'" ;;
+esac

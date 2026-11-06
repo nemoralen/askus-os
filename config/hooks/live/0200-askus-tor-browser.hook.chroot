@@ -1,0 +1,26 @@
+#!/bin/bash
+# Ships the official Tor Browser inside the image (like Tails), verified against
+# the Tor Browser Developers signing key. It uses the system Tor daemon.
+set -euo pipefail
+TB_FPR=EF6E286DDA85EA2A4BA7DE684E2C6E8793298290
+TMP=$(mktemp -d); export GNUPGHOME="$TMP/gnupg"; mkdir -m700 "$GNUPGHOME"
+
+read -r URL SIG < <(curl -fsSL https://aus1.torproject.org/torbrowser/update_3/release/downloads.json |
+  python3 -c 'import sys,json;d=json.load(sys.stdin)["downloads"]["linux-x86_64"]["ALL"];print(d["binary"],d["sig"])')
+echo "[askus] Tor Browser: $URL"
+curl -fsSL -o "$TMP/tb.tar.xz" "$URL"
+curl -fsSL -o "$TMP/tb.tar.xz.asc" "$SIG"
+
+gpg --batch --auto-key-locate nodefault,wkd --locate-keys torbrowser@torproject.org ||
+  curl -fsSL "https://keys.openpgp.org/vks/v1/by-fingerprint/$TB_FPR" | gpg --batch --import
+gpg --batch --status-fd 1 --verify "$TMP/tb.tar.xz.asc" "$TMP/tb.tar.xz" > "$TMP/status" 2>/dev/null || true
+if ! grep -qE "VALIDSIG .* $TB_FPR$" "$TMP/status"; then
+  echo "[askus] FATAL: Tor Browser signature verification failed"; cat "$TMP/status"; exit 1
+fi
+
+rm -rf /opt/tor-browser
+tar -xJf "$TMP/tb.tar.xz" -C /opt
+[ -d /opt/tor-browser ] || mv /opt/tor-browser* /opt/tor-browser
+# The live user (uid 1000, created by live-config at boot) owns the browser so it can write its profile.
+chown -R 1000:1000 /opt/tor-browser
+rm -rf "$TMP"

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Tor Status
+Comment=Check that you are connected through Tor
+Exec=/usr/local/bin/askus-tor-status
+Icon=askus-logo
+Categories=Network;Security;

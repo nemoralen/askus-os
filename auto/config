@@ -1,0 +1,37 @@
+#!/bin/sh
+# ASKus OS — live-build configuration (Debian 13 "trixie", amd64)
+set -e
+
+KPARAMS="boot=live components quiet splash \
+username=askus hostname=localhost locales=en_US.UTF-8 keyboard-layouts=us timezone=Etc/UTC \
+live-config.nocomponents=sudo,openssh-server \
+noswap ipv6.disable=1 \
+init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 slab_nomerge \
+randomize_kstack_offset=on vsyscall=none debugfs=off \
+mitigations=auto"
+
+lb config noauto \
+  --mode debian \
+  --distribution trixie \
+  --architectures amd64 \
+  --archive-areas "main contrib non-free non-free-firmware" \
+  --binary-images iso-hybrid \
+  --bootloaders "grub-efi,syslinux" \
+  --uefi-secure-boot enable \
+  --firmware-binary true \
+  --firmware-chroot true \
+  --linux-packages "linux-image" \
+  --linux-flavours amd64 \
+  --apt-recommends false \
+  --security true \
+  --updates true \
+  --cache-packages true \
+  --chroot-squashfs-compression-type zstd \
+  --iso-application "ASKus OS" \
+  --iso-publisher "ASK Us Design & Consulting" \
+  --iso-volume "ASKUS_OS" \
+  --image-name "askus-os" \
+  --memtest none \
+  --bootappend-live "$KPARAMS" \
+  --bootappend-live-failsafe "boot=live components username=askus hostname=localhost memtest noapic noapm nodma nomce nosmp nosplash vga=788" \
+  "${@}"

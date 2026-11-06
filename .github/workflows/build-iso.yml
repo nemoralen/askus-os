@@ -1,0 +1,57 @@
+name: Build ASKus OS ISO
+
+on:
+  workflow_dispatch:          # "Run workflow" button in the Actions tab
+  push:
+    tags: ["v*"]              # pushing a tag like v1.0 also publishes a Release
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space on the runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      - name: Build ISO inside Debian 13 (trixie)
+        run: |
+          docker run --rm --privileged -v "$PWD":/work -w /work debian:trixie \
+            bash -c "chmod +x build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/* config/includes.chroot/usr/local/bin/* config/includes.chroot/usr/local/sbin/* && apt-get update && apt-get install -y --no-install-recommends ca-certificates && ./build.sh"
+
+      - name: Prepare files
+        run: |
+          mkdir -p out
+          sudo mv *.iso *.sha256 out/
+          sudo cp build.log out/ || true
+          cd out
+          ISO=$(ls *.iso)
+          # GitHub release files must be < 2 GB: split if needed (rejoin with: cat askus-os.iso.part* > askus-os.iso)
+          if [ "$(stat -c%s "$ISO")" -gt 2000000000 ]; then
+            split -b 1900M -d "$ISO" "$ISO.part"; rm "$ISO"
+          fi
+          ls -la
+
+      - name: Upload ISO as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: askus-os-iso
+          path: out/*
+          retention-days: 14
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          body: |
+            ASKus OS ${{ github.ref_name }} — bootable USB image (amd64, UEFI + legacy BIOS).
+            Verify with `sha256sum -c *.sha256`, then flash with balenaEtcher or `dd`.

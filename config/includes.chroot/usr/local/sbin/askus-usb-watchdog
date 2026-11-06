@@ -1,0 +1,11 @@
+#!/bin/bash
+# Powers the computer off immediately if the ASKus OS USB stick is removed (like Tails).
+src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+case "$src" in ""|/dev/sr*|/dev/loop*) exec sleep infinity;; esac   # DVD, VM image or "toram": nothing to watch
+disk=/dev/$(lsblk -no PKNAME "$src" | head -n1)
+while sleep 1; do
+  if [ ! -b "$disk" ]; then
+    echo 1 > /proc/sys/kernel/sysrq
+    echo o > /proc/sysrq-trigger
+  fi
+done

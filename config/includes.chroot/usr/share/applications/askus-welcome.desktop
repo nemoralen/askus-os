@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Welcome
+Comment=Persistent storage, Tor bridges and admin settings
+Exec=/usr/local/bin/askus-welcome
+Icon=askus-logo
+Categories=System;Security;

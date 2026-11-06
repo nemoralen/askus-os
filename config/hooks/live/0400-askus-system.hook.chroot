@@ -1,0 +1,62 @@
+#!/bin/bash
+# System configuration: services, privacy defaults, branding, boot splash.
+set -eu
+
+# ---- services ----
+systemctl enable nftables.service
+systemctl enable askus-resolv.service askus-usb-watchdog.service
+systemctl enable tor.service || true
+systemctl enable zramswap.service || true
+
+# Things that leak, phone home, or slow boot down
+for u in avahi-daemon.service avahi-daemon.socket ModemManager.service \
+         NetworkManager-wait-online.service systemd-timesyncd.service \
+         apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer \
+         fstrim.timer cups.service cups-browsed.service bluetooth.service ssh.service; do
+  systemctl mask "$u" 2>/dev/null || true
+done
+# File indexers (privacy + speed)
+for u in tracker-miner-fs-3.service tracker-extract-3.service tracker-miner-rss-3.service \
+         localsearch-3.service localsearch-control-3.service localsearch-writeback-3.service; do
+  systemctl --global mask "$u" 2>/dev/null || true
+done
+rm -f /etc/xdg/autostart/tracker-*.desktop /etc/xdg/autostart/localsearch-*.desktop \
+      /etc/xdg/autostart/org.gnome.Software.desktop /etc/xdg/autostart/geoclue-demo-agent.desktop
+
+# ---- GNOME defaults ----
+dconf update
+
+# ---- permissions on our helpers ----
+chmod 0755 /usr/local/bin/askus-* /usr/local/sbin/askus-*
+chmod 0700 /etc/skel/.electrum 2>/dev/null || true
+chmod 0755 /etc/tor/torrc.d
+
+# ---- branding ----
+cat > /usr/lib/os-release <<'OSR'
+PRETTY_NAME="ASKus OS 1.0"
+NAME="ASKus OS"
+VERSION_ID="1.0"
+VERSION="1.0 (Nebula)"
+VERSION_CODENAME=trixie
+ID=askus
+ID_LIKE=debian
+LOGO=askus-logo
+HOME_URL="https://askusdesign.com/"
+SUPPORT_URL="https://askusdesign.com/"
+BUG_REPORT_URL="https://askusdesign.com/"
+OSR
+echo "ASKus OS 1.0 \\n \\l" > /etc/issue
+echo "ASKus OS 1.0" > /etc/issue.net
+for s in 16 24 32 48 64 128 256 512; do
+  install -Dm644 /usr/share/askus/png/askus-logo-$s.png /usr/share/icons/hicolor/${s}x${s}/apps/askus-logo.png
+done
+install -Dm644 /usr/share/askus/logo.svg /usr/share/icons/hicolor/scalable/apps/askus-logo.svg
+ln -sf /usr/share/icons/hicolor/256x256/apps/askus-logo.png /usr/share/pixmaps/askus-logo.png
+gtk-update-icon-cache -f -q /usr/share/icons/hicolor || true
+
+# ---- Plymouth boot splash ----
+plymouth-set-default-theme askus || true
+update-initramfs -u -k all || true
+
+# ---- locale ----
+sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen || true

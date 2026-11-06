@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Tor Browser
+GenericName=Anonymous Web Browser
+Comment=Browse the web anonymously through Tor
+Exec=/usr/local/bin/askus-tor-browser %u
+Icon=/opt/tor-browser/Browser/browser/chrome/icons/default/default128.png
+Categories=Network;WebBrowser;Security;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=Tor Browser

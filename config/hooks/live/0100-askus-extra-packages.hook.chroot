@@ -1,0 +1,70 @@
+#!/bin/bash
+# Installs the "nice to have" toolkit one package at a time, so a package that is
+# renamed or missing in Debian never breaks the whole ISO build.
+set -u
+export DEBIAN_FRONTEND=noninteractive
+
+OPTIONAL=(
+  # wallets / passwords / crypto
+  electrum keepassxc-full keepassxc
+  # Tor pluggable transports (bridges)
+  obfs4proxy lyrebird snowflake-client
+  # metadata, secure deletion, QR
+  metadata-cleaner secure-delete wipe qrencode zbar-tools
+  # encrypted containers (VeraCrypt-compatible)
+  zulucrypt-gui zulucrypt-cli
+  # email & office & media (Tails parity)
+  thunderbird
+  libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-gnome libreoffice-gtk3
+  gimp inkscape audacity
+  # look & feel extras
+  gnome-shell-extension-blur-my-shell plymouth-label plymouth-themes loupe
+)
+
+apt-get update
+FAILED=()
+for p in "${OPTIONAL[@]}"; do
+  if apt-cache show "$p" >/dev/null 2>&1; then
+    apt-get install -y --no-install-recommends "$p" || FAILED+=("$p")
+  else
+    FAILED+=("$p")
+  fi
+done
+
+# ---- Electrum fallback: official AppImage, verified with ThomasV's signing key ----
+if ! command -v electrum >/dev/null 2>&1; then
+  echo "[askus] electrum not in Debian archive, fetching verified AppImage"
+  set -e
+  TMP=$(mktemp -d); export GNUPGHOME="$TMP/gnupg"; mkdir -m700 "$GNUPGHOME"
+  VER=$(curl -fsSL https://electrum.org/version | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+  BASE="https://download.electrum.org/$VER"
+  curl -fsSL -o "$TMP/electrum.AppImage" "$BASE/electrum-$VER-x86_64.AppImage"
+  curl -fsSL -o "$TMP/electrum.AppImage.asc" "$BASE/electrum-$VER-x86_64.AppImage.asc"
+  FPR=637DB1E23370F84AFF88CCE03152347D07DA627C   # Stephan Oeste (Electrum release signer)
+  FPR2=6694D8DE7BE8EE5631BED9502BD5824B7F9470E6  # ThomasV
+  for f in $FPR $FPR2; do
+    curl -fsSL "https://keys.openpgp.org/vks/v1/by-fingerprint/$f" | gpg --batch --import || true
+  done
+  gpg --batch --status-fd 1 --verify "$TMP/electrum.AppImage.asc" "$TMP/electrum.AppImage" > "$TMP/status" 2>/dev/null || true
+  if grep -qE "VALIDSIG .* ($FPR|$FPR2)$" "$TMP/status"; then
+    install -Dm755 "$TMP/electrum.AppImage" /opt/electrum/electrum.AppImage
+    ln -sf /opt/electrum/electrum.AppImage /usr/local/bin/electrum
+    apt-get install -y --no-install-recommends libfuse2t64 || apt-get install -y --no-install-recommends libfuse2 || true
+    cat > /usr/share/applications/electrum.desktop <<'DESK'
+[Desktop Entry]
+Type=Application
+Name=Electrum Bitcoin Wallet
+Exec=electrum %u
+Icon=electrum
+Categories=Finance;Network;
+MimeType=x-scheme-handler/bitcoin;
+DESK
+  else
+    echo "[askus] WARNING: Electrum signature could not be verified - NOT installed"
+  fi
+  rm -rf "$TMP"; unset GNUPGHOME
+  set +e
+fi
+
+echo "[askus] optional packages not available: ${FAILED[*]:-none}" | tee /usr/share/askus/missing-optional-packages.txt
+exit 0

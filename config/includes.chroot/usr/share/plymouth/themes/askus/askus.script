@@ -1,0 +1,59 @@
+# ASKus OS boot splash: glowing logo that "breathes" while the system starts.
+Window.SetBackgroundTopColor(0.03, 0.04, 0.13);
+Window.SetBackgroundBottomColor(0.05, 0.02, 0.10);
+
+cx = Window.GetX() + Window.GetWidth() / 2;
+cy = Window.GetY() + Window.GetHeight() / 2;
+
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(cx - logo.image.GetWidth() / 2);
+logo.sprite.SetY(cy - logo.image.GetHeight() / 2 - 60);
+
+word.image = Image("wordmark.png");
+word.sprite = Sprite(word.image);
+word.sprite.SetX(cx - word.image.GetWidth() / 2);
+word.sprite.SetY(cy + logo.image.GetHeight() / 2 - 20);
+
+dot.image = Image("dot.png");
+for (i = 0; i < 3; i++) {
+  dots[i] = Sprite(dot.image);
+  dots[i].SetX(cx - 30 + i * 24);
+  dots[i].SetY(cy + logo.image.GetHeight() / 2 + word.image.GetHeight() + 10);
+}
+
+t = 0;
+fun refresh() {
+  t++;
+  logo.sprite.SetOpacity(0.72 + 0.28 * Math.Sin(t / 16));
+  for (i = 0; i < 3; i++) {
+    dots[i].SetOpacity(0.25 + 0.75 * Math.Abs(Math.Sin(t / 12 - i * 0.6)));
+  }
+}
+Plymouth.SetRefreshFunction(refresh);
+
+# Password prompt support (e.g. if you add initramfs encryption later)
+fun display_password(prompt, bullets) {
+  pr.image = Image.Text(prompt, 0.9, 0.9, 1.0);
+  pr.sprite = Sprite(pr.image);
+  pr.sprite.SetX(cx - pr.image.GetWidth() / 2);
+  pr.sprite.SetY(Window.GetHeight() * 0.82);
+  s = "";
+  for (i = 0; i < bullets; i++) s += "●";
+  bl.image = Image.Text(s, 1, 1, 1);
+  bl.sprite = Sprite(bl.image);
+  bl.sprite.SetX(cx - bl.image.GetWidth() / 2);
+  bl.sprite.SetY(Window.GetHeight() * 0.82 + 30);
+}
+Plymouth.SetDisplayPasswordFunction(display_password);
+
+fun display_normal() { pr.sprite.SetOpacity(0); bl.sprite.SetOpacity(0); }
+Plymouth.SetDisplayNormalFunction(display_normal);
+
+fun message(text) {
+  msg.image = Image.Text(text, 0.7, 0.72, 0.85);
+  msg.sprite = Sprite(msg.image);
+  msg.sprite.SetX(cx - msg.image.GetWidth() / 2);
+  msg.sprite.SetY(Window.GetHeight() - 60);
+}
+Plymouth.SetMessageFunction(message);

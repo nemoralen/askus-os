@@ -1,0 +1,13 @@
+# ---- Anonymity & security toolkit (core, guaranteed in Debian trixie) ----
+tor
+tor-geoipdb
+torsocks
+nyx
+gnupg
+dirmngr
+scdaemon
+pinentry-gnome3
+kleopatra
+seahorse
+paperkey
+mat2

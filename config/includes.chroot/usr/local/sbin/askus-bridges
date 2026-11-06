@@ -1,0 +1,36 @@
+#!/bin/bash
+# ASKus OS — configure Tor bridges (stdin: one bridge line per line), or "clear".
+set -euo pipefail
+FLAG=/run/askus/welcome-open
+CONF=/etc/tor/torrc.d/bridges.conf
+die() { echo "error: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
+[ -e "$FLAG" ] || die "bridges can only be changed from the Welcome screen"
+
+restart() { systemctl restart tor@default.service 2>/dev/null || systemctl restart tor.service; }
+
+if [ "${1:-set}" = clear ]; then rm -f "$CONF"; restart; echo "bridges=off"; exit 0; fi
+
+PT=""
+for b in /usr/bin/lyrebird /usr/bin/obfs4proxy; do [ -x "$b" ] && { PT=$b; break; }; done
+SF=/usr/bin/snowflake-client
+
+TMP=$(mktemp)
+{ echo "UseBridges 1"
+  [ -n "$PT" ] && echo "ClientTransportPlugin obfs4,meek_lite,webtunnel exec $PT"
+  [ -x "$SF" ] && echo "ClientTransportPlugin snowflake exec $SF"
+} > "$TMP"
+n=0
+while IFS= read -r line; do
+  line=$(echo "$line" | sed 's/^[Bb]ridge[[:space:]]\+//; s/[[:space:]]*$//')
+  [ -z "$line" ] && continue
+  [[ "$line" =~ ^(obfs4|snowflake|webtunnel|meek_lite|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+)[[:space:]] ||
+     "$line" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]] || { rm -f "$TMP"; die "not a valid bridge line: $line"; }
+  [[ "$line" =~ [^[:print:]] ]] && { rm -f "$TMP"; die "invalid characters in bridge line"; }
+  echo "Bridge $line" >> "$TMP"; n=$((n+1))
+done
+[ $n -gt 0 ] || { rm -f "$TMP"; die "no bridge lines given"; }
+install -m 0644 "$TMP" "$CONF"; rm -f "$TMP"
+if ! tor --verify-config -f /etc/tor/torrc >/dev/null 2>&1; then rm -f "$CONF"; restart; die "Tor rejected these bridges"; fi
+restart
+echo "bridges=$n"

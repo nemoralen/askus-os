@@ -1,0 +1,36 @@
+#!/bin/bash
+# macOS-style look: WhiteSur GTK / GNOME Shell theme, icons and cursors, pulled from GitHub.
+set -u
+export DEBIAN_FRONTEND=noninteractive
+GTK_REF=${WHITESUR_GTK_REF:-master}
+ICON_REF=${WHITESUR_ICON_REF:-master}
+CURSOR_REF=${WHITESUR_CURSOR_REF:-master}
+
+BUILD_DEPS="git sassc libglib2.0-dev-bin libxml2-utils"
+apt-get install -y --no-install-recommends $BUILD_DEPS
+
+W=/tmp/whitesur; rm -rf $W; mkdir -p $W
+git clone --depth 1 -b "$GTK_REF"    https://github.com/vinceliuice/WhiteSur-gtk-theme.git  $W/gtk
+git clone --depth 1 -b "$ICON_REF"   https://github.com/vinceliuice/WhiteSur-icon-theme.git $W/icons
+git clone --depth 1 -b "$CURSOR_REF" https://github.com/vinceliuice/WhiteSur-cursors.git    $W/cursors
+
+# GTK3 + GNOME Shell theme (system-wide)
+( cd $W/gtk && ./install.sh -d /usr/share/themes -c dark -c light --silent-mode ) || echo "[askus] WhiteSur GTK install reported an error"
+
+# libadwaita (GTK4) theme: the script refuses to run as root, so run it as nobody and copy into /etc/skel
+install -d -o nobody $W/home && cp -r $W/gtk $W/home/gtk && chown -R nobody $W/home
+su -s /bin/bash nobody -c "cd $W/home/gtk && HOME=$W/home ./install.sh -l -c dark --silent-mode" || true
+if [ -d $W/home/.config/gtk-4.0 ]; then
+  mkdir -p /etc/skel/.config && cp -r $W/home/.config/gtk-4.0 /etc/skel/.config/
+fi
+
+# Icons and cursors
+( cd $W/icons && ./install.sh -d /usr/share/icons ) || echo "[askus] WhiteSur icon install reported an error"
+rm -rf /usr/share/icons/WhiteSur-cursors && cp -pr $W/cursors/dist /usr/share/icons/WhiteSur-cursors
+
+for d in /usr/share/icons/WhiteSur*; do gtk-update-icon-cache -f -q "$d" 2>/dev/null || true; done
+
+rm -rf $W
+apt-get purge -y $BUILD_DEPS || true
+apt-get autoremove -y --purge || true
+exit 0
