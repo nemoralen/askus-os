@@ -62,6 +62,26 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 
 ---
 
+---
+
+## Weekly updates
+
+- **Every Sunday** GitHub builds a fresh ASKus OS with the latest Debian security fixes and Tor Browser, and publishes it under **Releases**. The newest 4 are kept. You can also start a build any time: **Actions → Build ASKus OS ISO → Run workflow**.
+- **Inside ASKus OS:** about a minute after Tor connects, ASKus OS checks for a newer build. If there is one, a notification offers **Update now**. You can also open **ASKus Update** from the app grid whenever you like.
+- **What the update does:** it downloads the new image through Tor (into your Persistent Storage if it's unlocked, otherwise into RAM) and checks its SHA-256. It then moves the running system into memory, writes the new version to the USB stick, reads it back to verify it, and keeps your Persistent Storage. Restart and you're on the new version.
+- **Needs:** ASKus OS started from its USB stick and enough free memory (about 3 GB with Persistent Storage unlocked, about 5 GB without). The first 4 GB of the stick are reserved for the system so updates never touch your saved files. That's why Persistent Storage needs a stick of 6 GB or more.
+
+## Leak test
+
+Open **Leak Test** from the app grid (or run `askus-leak-test --text` in a terminal) once Tor is connected. It checks:
+- that Tor and the firewall are running
+- that apps without proxy settings still exit through Tor, and that the Tor SOCKS proxy works
+- that UDP, IPv6 and ping are blocked, and that DNS goes to Tor
+- that your network card's MAC address is randomized and the clock is correct
+- that AppArmor is on, there's no disk swap, and freed memory is wiped
+
+❌ means a real leak; ⚠️ usually means "Tor still connecting" or "running in a virtual machine".
+
 ## Security notes (please read)
 
 ASKus OS copies the main protections of Tails, but **it is not Tails**. Tails has years of professional audits and protections this project doesn't have yet (for example a filtered Tor control port, `onion-grater`, Tor-based time sync, and full memory erasure at shutdown). If your safety depends on staying anonymous, use the real Tails.

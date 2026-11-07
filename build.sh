@@ -11,6 +11,17 @@ apt-get install -y --no-install-recommends live-build debootstrap xorriso squash
   mtools dosfstools grub-efi-amd64-bin grub-pc-bin shim-signed grub-efi-amd64-signed \
   syslinux syslinux-common isolinux librsvg2-bin imagemagick ca-certificates git curl python3 rsync
 
+echo "==> Stamping version"
+ASKUS_BUILD_ID=${ASKUS_BUILD_ID:-$(date -u +%Y%m%d%H%M)}
+ASKUS_UPDATE_REPO=${ASKUS_UPDATE_REPO:-nemoralen/askus-os}
+cat > config/includes.chroot/etc/askus-release <<REL
+VERSION=1.0
+BUILD_ID=$ASKUS_BUILD_ID
+TAG=v1.0-$ASKUS_BUILD_ID
+UPDATE_REPO=$ASKUS_UPDATE_REPO
+REL
+cat config/includes.chroot/etc/askus-release
+
 echo "==> Rendering branding (logo, icons, wallpaper, boot splash)"
 apt-get install -y --no-install-recommends librsvg2-bin imagemagick fonts-inter fonts-dejavu-core
 bash branding/render.sh

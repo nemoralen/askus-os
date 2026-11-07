@@ -31,11 +31,18 @@ need_flag() { [ -e "$FLAG" ] || die "persistent storage can only be changed from
 boot_disk() {
   local src pk
   src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+  # Started with "toram": the stick is no longer mounted, find it by its volume label
+  [ -n "$src" ] || src=$(blkid -t LABEL=ASKUS_OS -o device 2>/dev/null | grep -v '^/dev/sr' | head -n1)
   [ -n "$src" ] || return 1
   case "$src" in /dev/sr*|/dev/loop*) return 1;; esac
   pk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1)
   [ -n "$pk" ] && echo "/dev/$pk"
 }
+
+# The first 4 GiB of the stick are reserved for the system image, so that a
+# newer (bigger) ASKus OS can be written over it by askus-update without
+# touching the Persistent Storage that follows.
+RESERVED_SECTORS=$((4 * 1024 * 1024 * 2))
 
 find_volume() {
   local disk=$1 p
@@ -48,9 +55,9 @@ find_volume() {
 
 # Largest free region on the disk -> "start size" in 512-byte sectors (1 MiB aligned)
 free_region() {
-  sfdisk -F "$1" 2>/dev/null | awk '
+  sfdisk -F "$1" 2>/dev/null | awk -v min="$RESERVED_SECTORS" '
     /^ *[0-9]+ +[0-9]+ +[0-9]+ / { if ($3 > best) { best=$3; s=$1; e=$2 } }
-    END { if (best) { a=int((s+2047)/2048)*2048; if (e>a) print a, e-a+1; } }'
+    END { if (best) { a=int((s+2047)/2048)*2048; if (a<min) a=min; if (e>a) print a, e-a+1; } }'
 }
 
 read_pass() { IFS= read -r PASS || true; [ ${#PASS} -ge 8 ] || die "passphrase must be at least 8 characters"; }
@@ -103,7 +110,7 @@ case "$cmd" in
     find_volume "$disk" >/dev/null && die "persistent storage already exists"
     read_pass
     read -r start size < <(free_region "$disk") || die "no free space on the USB stick"
-    [ "$size" -ge $((1024*2048)) ] || die "need at least 1 GB of free space on the USB stick"
+    [ "$size" -ge $((1024*2048)) ] || die "need a USB stick of at least 6 GB (4 GB is reserved for the system and updates)"
     before=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"' | wc -l)
     echo "$start,$size,L" | sfdisk --append --force --no-reread --no-tell-kernel "$disk" >/dev/null
     partx -a "$disk" 2>/dev/null || partx -u "$disk" 2>/dev/null || true

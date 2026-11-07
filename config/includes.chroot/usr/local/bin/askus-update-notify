@@ -1,0 +1,20 @@
+#!/bin/bash
+# Runs at login: waits until Tor is connected, then checks for a newer weekly
+# ASKus OS build and shows a notification with an "Update now" button.
+sleep 20
+for i in $(seq 1 60); do                       # wait up to ~20 minutes for Tor
+  curl -s -m 15 --proxy socks5h://127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null |
+    grep -q '"IsTor":true' && break
+  sleep 20
+done
+
+R=$(/usr/local/sbin/askus-update check --json 2>/dev/null) || exit 0
+echo "$R" | grep -q '"newer": true' || exit 0
+TAG=$(echo "$R" | sed -n 's/.*"latest": "\([^"]*\)".*/\1/p')
+
+ACTION=$(notify-send --app-name="ASKus Update" --icon=askus-logo --urgency=normal \
+  --action=update="Update now" --action=later="Later" \
+  "ASKus OS update available" \
+  "A newer weekly build ($TAG) with the latest security fixes is ready." 2>/dev/null)
+[ "$ACTION" = "update" ] && exec /usr/local/bin/askus-updater
+exit 0

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Update check
+Exec=/usr/local/bin/askus-update-notify
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-Autostart-Delay=30

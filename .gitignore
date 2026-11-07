@@ -24,3 +24,5 @@ branding/boot-splash.svg
 config/includes.chroot/usr/share/plymouth/themes/askus/*.png
 branding/logo.svg
 branding/logo-small.svg
+config/includes.chroot/etc/askus-release
+__pycache__/

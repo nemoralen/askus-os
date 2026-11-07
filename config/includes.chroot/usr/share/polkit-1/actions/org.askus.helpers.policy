@@ -21,4 +21,10 @@
     <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/sbin/askus-bridges</annotate>
   </action>
+  <action id="org.askus.update">
+    <description>Update ASKus OS</description>
+    <message>Install the newest version of ASKus OS</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/sbin/askus-update</annotate>
+  </action>
 </policyconfig>

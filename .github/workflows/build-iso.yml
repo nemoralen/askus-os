@@ -1,12 +1,24 @@
 name: Build ASKus OS ISO
 
+# Builds a fresh ASKus OS image with the latest Debian security fixes and
+# Tor Browser, and publishes it as a GitHub Release. ASKus OS checks this
+# repository's latest release at startup and offers to update itself.
 on:
+  schedule:
+    - cron: "17 7 * * 0"      # every Sunday 07:17 UTC (2:17 AM New York)
   workflow_dispatch:          # "Run workflow" button in the Actions tab
   push:
-    tags: ["v*"]              # pushing a tag like v1.0 also publishes a Release
+    tags: ["v*"]
 
 permissions:
   contents: write
+
+concurrency:
+  group: askus-build
+  cancel-in-progress: false
+
+env:
+  KEEP_RELEASES: 4            # how many weekly releases to keep
 
 jobs:
   build:
@@ -14,6 +26,23 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+
+      - name: Version for this build
+        id: ver
+        run: |
+          ID=$(date -u +%Y%m%d%H%M)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "tag=v1.0-$ID" >> "$GITHUB_OUTPUT"
+          echo "Building ASKus OS v1.0-$ID"
+
+      - name: Check scripts (syntax)
+        run: |
+          set -e
+          for f in build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/*; do bash -n "$f"; done
+          for f in config/includes.chroot/usr/local/bin/* config/includes.chroot/usr/local/sbin/*; do
+            if head -1 "$f" | grep -q python; then python3 -m py_compile "$f"; else bash -n "$f"; fi
+          done
+          echo "all scripts OK"
 
       - name: Free disk space on the runner
         run: |
@@ -23,19 +52,25 @@ jobs:
 
       - name: Build ISO inside Debian 13 (trixie)
         run: |
-          docker run --rm --privileged -v "$PWD":/work -w /work debian:trixie \
+          docker run --rm --privileged -v "$PWD":/work -w /work \
+            -e ASKUS_BUILD_ID="${{ steps.ver.outputs.id }}" \
+            -e ASKUS_UPDATE_REPO="${{ github.repository }}" \
+            debian:trixie \
             bash -c "chmod +x build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/* config/includes.chroot/usr/local/bin/* config/includes.chroot/usr/local/sbin/* && apt-get update && apt-get install -y --no-install-recommends ca-certificates && ./build.sh"
 
-      - name: Prepare files
+      - name: Prepare release files
         run: |
           mkdir -p out
-          sudo mv *.iso *.sha256 out/
-          sudo cp build.log out/ || true
+          NAME="askus-os-${{ steps.ver.outputs.id }}.iso"
+          sudo mv "$(ls -1 *.iso | head -n1)" "out/$NAME"
+          sudo cp build.log out/build.log || true
+          sudo chown -R "$(id -u)" out
           cd out
-          ISO=$(ls *.iso)
-          # GitHub release files must be < 2 GB: split if needed (rejoin with: cat askus-os.iso.part* > askus-os.iso)
-          if [ "$(stat -c%s "$ISO")" -gt 2000000000 ]; then
-            split -b 1900M -d "$ISO" "$ISO.part"; rm "$ISO"
+          sha256sum "$NAME" > SHA256SUMS            # checksum of the WHOLE iso (used by the in-OS updater)
+          # GitHub release files must be < 2 GiB: split if needed.
+          # Rejoin on Windows: copy /b NAME.part00 + NAME.part01 NAME   |   Linux/Mac: cat NAME.part* > NAME
+          if [ "$(stat -c%s "$NAME")" -gt 2000000000 ]; then
+            split -b 1900M -d "$NAME" "$NAME.part"; rm "$NAME"
           fi
           ls -la
 
@@ -44,14 +79,40 @@ jobs:
         with:
           name: askus-os-iso
           path: out/*
-          retention-days: 14
+          retention-days: 7
           compression-level: 0
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ASKus OS ${{ steps.ver.outputs.tag }}
+          make_latest: true
+          files: |
+            out/*.iso*
+            out/SHA256SUMS
           body: |
-            ASKus OS ${{ github.ref_name }} — bootable USB image (amd64, UEFI + legacy BIOS).
-            Verify with `sha256sum -c *.sha256`, then flash with balenaEtcher or `dd`.
+            **ASKus OS ${{ steps.ver.outputs.tag }}**, a weekly build with the latest Debian security updates and Tor Browser.
+
+            **Already running ASKus OS?** It finds this update by itself at startup. Click **Update now** in the notification, or open **ASKus Update**.
+
+            **New install:** download the `.iso` (if it's split into `.part00`/`.part01`, join them: Windows `copy /b file.part00 + file.part01 file.iso`, Mac/Linux `cat file.part* > file.iso`), check it against `SHA256SUMS`, then flash it to a USB stick with balenaEtcher.
+
+      - name: Remove old releases (keep the newest ${{ env.KEEP_RELEASES }})
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[(env.KEEP_RELEASES|tonumber):] | .[].tagName' |
+          while read -r t; do echo "deleting old release $t"; gh release delete "$t" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag; done
+
+      - name: Keep the weekly schedule alive
+        # GitHub pauses scheduled workflows after 60 days without repository activity.
+        run: |
+          LAST=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - LAST )) -gt $(( 45*24*3600 )) ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive: weekly build ${{ steps.ver.outputs.tag }}"
+            git push
+          fi

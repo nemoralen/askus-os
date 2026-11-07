@@ -1,0 +1,230 @@
+#!/usr/bin/python3
+"""ASKus OS leak test.
+
+Checks that nothing can reach the internet except through Tor, and that the
+privacy settings are active. Run from the app grid ("Leak Test") or a terminal:
+    askus-leak-test            (opens a report window)
+    askus-leak-test --text     (prints the report)
+"""
+import email.utils
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+
+TOR_CHECK = "https://check.torproject.org/api/ip"
+results = []   # (status, title, detail)   status: PASS / FAIL / WARN
+
+
+def add(status, title, detail=""):
+    results.append((status, title, detail))
+
+
+def run(*cmd, timeout=40):
+    try:
+        return subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        return subprocess.CompletedProcess(cmd, 99, "", str(e))
+
+
+def tor_ip(proxy=None):
+    args = ["curl", "-s", "-m", "30", TOR_CHECK] + (["--proxy", proxy] if proxy else ["--noproxy", "*"])
+    r = run(*args, timeout=45)
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return None
+
+
+# 1 ─ Tor and firewall services
+def t_services():
+    for unit, name in (("tor@default.service", "Tor service"), ("nftables.service", "Firewall (nftables)")):
+        active = run("systemctl", "is-active", unit).stdout.strip() == "active"
+        add("PASS" if active else "FAIL", f"{name} is running", "" if active else f"{unit} is not active")
+
+
+# 2 ─ ordinary app traffic (no proxy settings at all) still comes out of Tor
+def t_transparent():
+    d = tor_ip()
+    if d and d.get("IsTor"):
+        add("PASS", "Apps without proxy settings go through Tor", f"websites see the Tor exit {d.get('IP')}")
+    elif d:
+        add("FAIL", "Apps without proxy settings go through Tor",
+            f"LEAK: a direct connection was seen from {d.get('IP')} (not Tor)")
+    else:
+        add("WARN", "Apps without proxy settings go through Tor",
+            "could not reach the test site (Tor may still be connecting); run the test again in a minute")
+
+
+# 3 ─ explicit SOCKS (Tor Browser, Electrum)
+def t_socks():
+    d = tor_ip("socks5h://127.0.0.1:9050")
+    if d and d.get("IsTor"):
+        add("PASS", "Tor SOCKS proxy works (Tor Browser, Electrum)", f"exit {d.get('IP')}")
+    else:
+        add("WARN", "Tor SOCKS proxy works (Tor Browser, Electrum)", "Tor is not connected yet")
+
+
+# 4 ─ UDP must be blocked (NTP, QUIC, WebRTC…), except DNS which Tor answers
+def t_udp():
+    ntp = b"\x1b" + 47 * b"\0"
+    leaked = []
+    for host, port in (("162.159.200.1", 123), ("1.1.1.1", 443), ("8.8.8.8", 3478)):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(3)
+        try:
+            s.sendto(ntp, (host, port))
+            s.recvfrom(512)
+            leaked.append(f"{host}:{port}")
+        except OSError:
+            pass
+        finally:
+            s.close()
+    if leaked:
+        add("FAIL", "UDP traffic is blocked", "LEAK: got replies from " + ", ".join(leaked))
+    else:
+        add("PASS", "UDP traffic is blocked", "time servers, QUIC and WebRTC-style traffic can't get out")
+
+
+# 5 ─ DNS goes to Tor
+def t_dns():
+    try:
+        resolv = open("/etc/resolv.conf").read()
+    except OSError:
+        resolv = ""
+    local = "nameserver 127.0.0.1" in resolv and resolv.count("nameserver") == 1
+    try:
+        socket.getaddrinfo("check.torproject.org", 443)
+        works = True
+    except OSError:
+        works = False
+    if local and works:
+        add("PASS", "DNS lookups go through Tor", "the system resolver is Tor's DNSPort")
+    elif local:
+        add("WARN", "DNS lookups go through Tor", "DNS is set to Tor but didn't answer yet (Tor still connecting?)")
+    else:
+        add("FAIL", "DNS lookups go through Tor", "/etc/resolv.conf points somewhere other than Tor")
+
+
+# 6 ─ IPv6 is off
+def t_ipv6():
+    try:
+        has = bool(open("/proc/net/if_inet6").read().strip())
+    except OSError:
+        has = False
+    ok = True
+    try:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        s.settimeout(4)
+        s.connect(("2606:4700:4700::1111", 443))
+        ok = False
+        s.close()
+    except OSError:
+        pass
+    if not has and ok:
+        add("PASS", "IPv6 is disabled", "")
+    else:
+        add("FAIL", "IPv6 is disabled", "IPv6 is active — traffic could bypass Tor")
+
+
+# 7 ─ ping (ICMP) is blocked
+def t_icmp():
+    r = run("ping", "-c", "1", "-W", "3", "1.1.1.1", timeout=10)
+    if r.returncode == 0:
+        add("FAIL", "Ping (ICMP) is blocked", "LEAK: a ping reached 1.1.1.1 directly")
+    else:
+        add("PASS", "Ping (ICMP) is blocked", "")
+
+
+# 8 ─ hardware address is randomized
+def t_mac():
+    r = run("ip", "-o", "link", "show")
+    real = []
+    for line in r.stdout.splitlines():
+        name = line.split(":")[1].strip().split("@")[0]
+        if name == "lo" or not os.path.exists(f"/sys/class/net/{name}/device"):
+            continue
+        state_up = "state UP" in line
+        randomized = "permaddr" in line
+        real.append((name, state_up, randomized))
+    if not real:
+        add("WARN", "Network card address (MAC) is randomized", "no physical network card found (virtual machine?)")
+        return
+    bad = [n for n, up, rnd in real if up and not rnd]
+    if bad:
+        add("WARN", "Network card address (MAC) is randomized",
+            "the real address is in use on " + ", ".join(bad) + " (normal in some virtual machines)")
+    else:
+        add("PASS", "Network card address (MAC) is randomized",
+            ", ".join(f"{n}: {'random' if rnd else 'not connected'}" for n, up, rnd in real))
+
+
+# 9 ─ clock is correct (Tor and HTTPS need it)
+def t_clock():
+    r = run("curl", "-sI", "-m", "30", "--proxy", "socks5h://127.0.0.1:9050", "https://check.torproject.org/")
+    date = next((l.split(":", 1)[1].strip() for l in r.stdout.splitlines() if l.lower().startswith("date:")), None)
+    if not date:
+        add("WARN", "System clock is correct", "couldn't compare (Tor not connected yet)")
+        return
+    skew = time.time() - email.utils.parsedate_to_datetime(date).timestamp()
+    if abs(skew) < 300:
+        add("PASS", "System clock is correct", f"off by {abs(skew):.0f} s")
+    else:
+        add("WARN", "System clock is correct",
+            f"off by {abs(skew)/60:.0f} minutes — fix it in the Welcome screen (Set time)")
+
+
+# 10 ─ other hardening
+def t_hardening():
+    host = socket.gethostname()
+    add("PASS" if host in ("localhost", "amnesia") else "WARN", "Computer name doesn't identify you",
+        f"hostname is '{host}'")
+    try:
+        aa = open("/sys/module/apparmor/parameters/enabled").read().strip() == "Y"
+    except OSError:
+        aa = False
+    add("PASS" if aa else "WARN", "AppArmor app confinement is on", "")
+    try:
+        swaps = [l.split()[0] for l in open("/proc/swaps").read().splitlines()[1:]]
+    except OSError:
+        swaps = []
+    disk = [s for s in swaps if "zram" not in s]
+    add("PASS" if not disk else "FAIL", "No swap on disk (memory never written to a drive)",
+        "only compressed RAM swap" if not disk else "disk swap in use: " + ", ".join(disk))
+    try:
+        cmd = open("/proc/cmdline").read()
+    except OSError:
+        cmd = ""
+    add("PASS" if "init_on_free=1" in cmd else "WARN", "Freed memory is wiped (init_on_free)", "")
+
+
+def main():
+    tests = [t_services, t_transparent, t_socks, t_udp, t_dns, t_ipv6, t_icmp, t_mac, t_clock, t_hardening]
+    for t in tests:
+        try:
+            t()
+        except Exception as e:  # noqa: BLE001
+            add("WARN", t.__name__, f"test error: {e}")
+    icon = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️"}
+    fails = sum(1 for s, _, _ in results if s == "FAIL")
+    warns = sum(1 for s, _, _ in results if s == "WARN")
+    head = ("NO LEAKS FOUND" if not fails else f"{fails} PROBLEM(S) FOUND") + \
+           (f" · {warns} warning(s)" if warns else "")
+    lines = [f"ASKus OS leak test — {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}", head, ""]
+    for s, title, detail in results:
+        lines.append(f"{icon[s]}  {title}" + (f"\n      {detail}" if detail else ""))
+    lines += ["", "Also try in Tor Browser: check.torproject.org · browserleaks.com/ip · dnsleaktest.com"]
+    report = "\n".join(lines)
+    if "--text" in sys.argv or not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        print(report)
+    else:
+        subprocess.run(["zenity", "--text-info", "--title=ASKus Leak Test", "--width=640", "--height=620",
+                        "--font=DejaVu Sans Mono 10"], input=report, text=True)
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

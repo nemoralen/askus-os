@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Leak Test
+Comment=Check that nothing gets around Tor
+Exec=/usr/local/bin/askus-leak-test
+Icon=askus-logo
+Categories=Network;Security;
+Keywords=tor;leak;privacy;test;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Update
+Comment=Check for and install the newest ASKus OS
+Exec=/usr/local/bin/askus-updater
+Icon=askus-logo
+Categories=System;Settings;
+Keywords=update;upgrade;version;
