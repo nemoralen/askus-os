@@ -1,0 +1,18 @@
+{
+  "BrowserThemeColor": "#F97316",
+  "MetricsReportingEnabled": false,
+  "BraveP3AEnabled": false,
+  "BraveStatsPingEnabled": false,
+  "BraveWebDiscoveryEnabled": false,
+  "BraveRewardsDisabled": true,
+  "BraveWalletDisabled": true,
+  "BraveVPNDisabled": true,
+  "BraveAIChatEnabled": false,
+  "TorDisabled": true,
+  "BackgroundModeEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "DnsOverHttpsMode": "off",
+  "WebRtcIPHandling": "disable_non_proxied_udp",
+  "ComponentUpdatesEnabled": true
+}

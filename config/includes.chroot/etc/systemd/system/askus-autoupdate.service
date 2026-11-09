@@ -1,0 +1,14 @@
+[Unit]
+Description=ASKus OS: install program updates over Tor (this session)
+After=network-online.target tor@default.service nftables.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/askus-autoupdate
+Nice=15
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,8 @@ lb config noauto \
   --linux-flavours amd64 \
   --apt-recommends false \
   --security true \
+  --mirror-binary "https://deb.debian.org/debian/" \
+  --mirror-binary-security "https://security.debian.org/debian-security/" \
   --updates true \
   --cache-packages true \
   --chroot-squashfs-compression-type zstd \

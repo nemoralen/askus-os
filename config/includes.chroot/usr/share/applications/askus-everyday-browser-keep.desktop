@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Everyday Browser (keep logins)
+GenericName=Web Browser (not anonymous)
+Comment=Brave, sandboxed; logins and bookmarks are saved in your Persistent Storage
+Exec=/usr/local/bin/askus-everyday-browser --keep %U
+Icon=brave-browser
+Categories=Network;WebBrowser;
+StartupWMClass=EverydayBrowser

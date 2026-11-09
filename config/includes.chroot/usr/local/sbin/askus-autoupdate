@@ -1,0 +1,46 @@
+#!/bin/bash
+# ASKus OS: install program updates for this session, downloaded through Tor.
+# Runs once per boot (askus-autoupdate.service), quietly, at low priority.
+# Everything is fetched over Tor, so update servers never see your IP address.
+# Updates live in RAM for this session; the weekly ASKus OS update makes them permanent.
+STATUS=/run/askus/autoupdate.json
+CONF=/etc/askus/autoupdate.conf
+[ -f "$CONF" ] && . "$CONF"
+[ "${AUTO_UPDATE:-yes}" = "no" ] && exit 0
+mkdir -p /run/askus
+st() { printf '{"state":"%s","updated":%s,"time":%s,"message":"%s"}\n' "$1" "${2:-0}" "$(date +%s)" "$3" > "$STATUS"; chmod 644 "$STATUS"; }
+
+notify() {  # show a desktop notification to the logged-in user
+  local uid; uid=$(id -u askus 2>/dev/null) || return 0
+  [ -S "/run/user/$uid/bus" ] || return 0
+  runuser -u askus -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    notify-send --app-name="ASKus OS" --icon=askus-logo "$1" "$2" 2>/dev/null || true
+}
+
+st waiting 0 "waiting for Tor"
+for i in $(seq 1 90); do      # wait up to ~30 minutes for Tor
+  curl -s -m 15 --proxy socks5h://127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null \
+    | grep -q '"IsTor":true' && break
+  sleep 20
+done
+# small random delay so many ASKus users don't all hit the mirrors at the same moment
+sleep $(( 60 + RANDOM % 240 ))
+
+st running 0 "checking for program updates"
+if ! apt-get -q update >/run/askus/autoupdate.log 2>&1; then
+  st error 0 "could not reach the update servers through Tor"; exit 0
+fi
+BEFORE=$(apt list --upgradable 2>/dev/null | grep -c upgradable)
+if [ "$BEFORE" -eq 0 ]; then st done 0 "all programs are up to date"; exit 0; fi
+
+unattended-upgrade -v >>/run/askus/autoupdate.log 2>&1
+AFTER=$(apt list --upgradable 2>/dev/null | grep -c upgradable)
+N=$(( BEFORE - AFTER )); [ $N -lt 0 ] && N=0
+apt-get clean
+if [ $N -gt 0 ]; then
+  st done $N "$N program update(s) installed for this session"
+  notify "Programs updated" "$N security/program update(s) were installed through Tor for this session."
+else
+  st done 0 "no automatic updates needed"
+fi
+exit 0

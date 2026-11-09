@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Everyday Browser
+GenericName=Web Browser (not anonymous)
+Comment=Brave, sandboxed, for sites where you log in as yourself. Forgets everything when closed.
+Exec=/usr/local/bin/askus-everyday-browser %U
+Icon=brave-browser
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=EverydayBrowser
+Actions=keep;
+
+[Desktop Action keep]
+Name=Open and keep my logins (Persistent Storage)
+Exec=/usr/local/bin/askus-everyday-browser --keep

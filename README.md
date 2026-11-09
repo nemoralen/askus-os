@@ -71,6 +71,21 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 - **What the update does:** it downloads the new image through Tor (into your Persistent Storage if it's unlocked, otherwise into RAM) and checks its SHA-256. It then moves the running system into memory, writes the new version to the USB stick, reads it back to verify it, and keeps your Persistent Storage. Restart and you're on the new version.
 - **Needs:** ASKus OS started from its USB stick and enough free memory (about 3 GB with Persistent Storage unlocked, about 5 GB without). The first 4 GB of the stick are reserved for the system so updates never touch your saved files. That's why Persistent Storage needs a stick of 6 GB or more.
 
+## Everyday Browser (Brave)
+
+For sites where you log in as yourself anyway (business email, banking, YouTube):
+- **Brave**, running in a **firejail sandbox**. It can't see your Persistent folder, wallet, GnuPG keys or Tor Browser.
+- **Orange window frame**, so you never confuse it with Tor Browser.
+- Its traffic **still goes through Tor**, so sites don't see your IP address. Brave's telemetry, Rewards, Wallet, AI chat and built-in Tor windows are switched off.
+- **Everyday Browser** forgets everything when you close it. **Everyday Browser (keep logins)** saves logins and bookmarks in your Persistent Storage.
+- **Not anonymous:** once you log in, the site knows it's you. Use **Tor Browser** for anything anonymous, and never mix the two for the same task.
+
+## Automatic program updates
+
+About 1–5 minutes after Tor connects, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. Tor Browser updates itself the same way.
+- Core parts (kernel, desktop, boot) aren't changed mid-session. They come with the weekly **ASKus Update**, which also makes all updates permanent.
+- To turn this off, set `AUTO_UPDATE=no` in `/etc/askus/autoupdate.conf`.
+
 ## Leak test
 
 Open **Leak Test** from the app grid (or run `askus-leak-test --text` in a terminal) once Tor is connected. It checks:

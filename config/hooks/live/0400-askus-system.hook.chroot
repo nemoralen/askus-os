@@ -4,12 +4,12 @@ set -eu
 
 # ---- services ----
 systemctl enable nftables.service
-systemctl enable askus-resolv.service askus-usb-watchdog.service
+systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service
 systemctl enable tor.service || true
 systemctl enable zramswap.service || true
 
 # Things that leak, phone home, or slow boot down
-for u in avahi-daemon.service avahi-daemon.socket ModemManager.service \
+for u in avahi-daemon.service avahi-daemon.socket ModemManager.service unattended-upgrades.service \
          NetworkManager-wait-online.service systemd-timesyncd.service \
          apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer \
          fstrim.timer cups.service cups-browsed.service bluetooth.service ssh.service; do

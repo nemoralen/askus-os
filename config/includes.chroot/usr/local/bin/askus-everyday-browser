@@ -1,0 +1,38 @@
+#!/bin/bash
+# Everyday Browser: Brave in a firejail sandbox, separate from Tor Browser and from
+# your Persistent files, wallet and keys. Its traffic still goes through Tor.
+#   askus-everyday-browser          forgets everything when you close it
+#   askus-everyday-browser --keep   keeps logins/bookmarks in Persistent Storage
+MODE=forget
+if [ "${1:-}" = "--keep" ]; then MODE=keep; shift; fi
+
+if ! command -v brave-browser >/dev/null 2>&1; then
+  zenity --error --title="Everyday Browser" --text="Brave is not installed in this ASKus OS build."
+  exit 1
+fi
+
+if [ "$MODE" = keep ]; then
+  if mountpoint -q "$HOME/Persistent"; then
+    DIR="$HOME/Persistent/.everyday-browser"
+  else
+    zenity --warning --title="Everyday Browser" --width=380 \
+      --text="To keep your logins, unlock Persistent Storage on the Welcome screen at startup.\n\nOpening in <b>forget mode</b> instead (nothing is saved)."
+    MODE=forget
+  fi
+fi
+if [ "$MODE" = forget ]; then
+  DIR=$(mktemp -d /tmp/everyday-browser.XXXXXX)
+  trap 'rm -rf "$DIR"' EXIT
+fi
+mkdir -p "$DIR/Downloads"
+chmod 700 "$DIR"
+
+if command -v firejail >/dev/null 2>&1; then
+  PROFILE=/etc/firejail/brave.profile
+  [ -f "$PROFILE" ] && P=(--profile="$PROFILE") || P=()
+  firejail --quiet "${P[@]}" --private="$DIR" \
+    brave-browser --class=EverydayBrowser --no-default-browser-check --no-first-run "$@"
+else
+  brave-browser --class=EverydayBrowser --user-data-dir="$DIR/profile" \
+    --no-default-browser-check --no-first-run "$@"
+fi
