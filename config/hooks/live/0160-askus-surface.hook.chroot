@@ -1,0 +1,71 @@
+#!/bin/bash
+# Microsoft Surface support (Surface Pro 3-10, Laptop, Book, Go - Intel models).
+# On many Surfaces the keyboard cover, touchpad and touchscreen are connected through
+# Surface-specific chips that the stock Debian kernel does not drive. The linux-surface
+# project ships a patched kernel + the iptsd touch daemon. We install that kernel as a
+# SECOND kernel and park it outside /boot, so the normal ASKus OS boot is unchanged;
+# the binary hook 9100-askus-surface-boot adds an "ASKus OS (Surface)" boot entry that
+# GRUB picks automatically on Surface hardware.
+# Failure here is never fatal: the ISO is simply built without the Surface entry.
+set -u
+export DEBIAN_FRONTEND=noninteractive
+SURFACE_FPR=87DEFA4AB94A99A4C8C3112556C464BAAC421453
+KEY=/usr/share/askus/keys/linux-surface.asc
+LIST=/etc/apt/sources.list.d/linux-surface.list
+PARK=/usr/lib/askus/surface-boot
+
+warn() { echo "[askus] WARNING: $* - building without Surface support"; rm -f "$LIST"; exit 0; }
+
+[ -f "$KEY" ] || warn "linux-surface key missing"
+GOT=$(gpg --show-keys --with-colons "$KEY" 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+[ "$GOT" = "$SURFACE_FPR" ] || warn "linux-surface key fingerprint mismatch ($GOT)"
+
+echo "deb [arch=amd64 signed-by=$KEY] https://pkg.surfacelinux.com/debian release main" > "$LIST"
+apt-get update || warn "linux-surface repository unreachable"
+
+before=$(ls /boot/vmlinuz-* 2>/dev/null)
+apt-get install -y --no-install-recommends linux-image-surface || warn "linux-image-surface could not be installed"
+apt-get install -y --no-install-recommends iptsd || echo "[askus] NOTE: iptsd (touchscreen daemon) not installed"
+
+KVER=""
+for k in /boot/vmlinuz-*; do
+  echo "$before" | grep -qx "$k" || KVER=${k#/boot/vmlinuz-}
+done
+[ -n "$KVER" ] || KVER=$(ls /boot/vmlinuz-* | sed 's|/boot/vmlinuz-||' | grep -i surface | tail -n1)
+[ -n "$KVER" ] || warn "could not find the Surface kernel in /boot"
+echo "[askus] Surface kernel: $KVER"
+
+# Keyboard/touchpad drivers for Surface Pro 8/9/10 and Laptop 4+ must be in the initramfs
+# so the keyboard works as early as possible.
+mkdir -p /etc/initramfs-tools/conf.d
+cat > /usr/share/initramfs-tools/hooks/askus-surface <<'HOOK'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+. /usr/share/initramfs-tools/hook-functions
+case "$version" in *surface*) ;; *) exit 0;; esac
+for m in surface_aggregator surface_aggregator_registry surface_aggregator_hub \
+         surface_hid_core surface_hid surface_kbd 8250_dw intel_lpss intel_lpss_pci \
+         pinctrl_tigerlake pinctrl_icelake pinctrl_alderlake pinctrl_meteorlake \
+         intel_quicki2c ithc ipts hid_multitouch; do
+  manual_add_modules "$m" 2>/dev/null || true
+done
+HOOK
+chmod 755 /usr/share/initramfs-tools/hooks/askus-surface
+for m in surface_aggregator surface_aggregator_registry surface_aggregator_hub surface_hid_core surface_hid; do
+  grep -qx "$m" /etc/initramfs-tools/modules 2>/dev/null || echo "$m" >> /etc/initramfs-tools/modules
+done
+update-initramfs -c -k "$KVER" 2>/dev/null || update-initramfs -u -k "$KVER" || warn "initramfs for $KVER failed"
+
+# Park the Surface kernel outside /boot (live-build expects exactly one kernel there)
+mkdir -p "$PARK"
+mv "/boot/vmlinuz-$KVER" "$PARK/vmlinuz" || warn "could not move the Surface kernel"
+mv "/boot/initrd.img-$KVER" "$PARK/initrd.img" || warn "could not move the Surface initramfs"
+rm -f "/boot/config-$KVER" "/boot/System.map-$KVER" "/var/lib/initramfs-tools/$KVER"
+echo "$KVER" > "$PARK/version"
+
+# ASKus updates only from Debian over Tor; the Surface repo is not kept in the image.
+rm -f "$LIST"
+apt-get update >/dev/null 2>&1 || true
+echo "[askus] Surface support ready ($KVER)"

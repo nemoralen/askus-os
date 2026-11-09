@@ -1,0 +1,56 @@
+#!/bin/bash
+# Adds the "ASKus OS (Surface)" boot entry (see 0160-askus-surface.hook.chroot).
+# On Surface hardware GRUB selects it automatically - the keyboard cover does not work
+# before the Surface drivers are loaded, so nobody should have to press a key.
+# With Secure Boot ON the Surface kernel cannot load (it is not Microsoft-signed), so the
+# automatic choice is skipped and the normal entry boots as before.
+set -u
+B=.
+[ -d live ] || B=binary
+[ -d "$B/live" ] || { echo "[askus] surface-boot: binary tree not found"; exit 0; }
+
+SRC=""
+for c in ../chroot chroot ../chroot/chroot chroot/chroot; do
+  [ -f "$c/usr/lib/askus/surface-boot/vmlinuz" ] && { SRC="$c/usr/lib/askus/surface-boot"; break; }
+done
+if [ -z "$SRC" ] && command -v unsquashfs >/dev/null && [ -f "$B/live/filesystem.squashfs" ]; then
+  rm -rf /tmp/askus-sb && unsquashfs -q -d /tmp/askus-sb "$B/live/filesystem.squashfs" usr/lib/askus/surface-boot >/dev/null 2>&1
+  [ -f /tmp/askus-sb/usr/lib/askus/surface-boot/vmlinuz ] && SRC=/tmp/askus-sb/usr/lib/askus/surface-boot
+fi
+[ -n "$SRC" ] || { echo "[askus] surface-boot: no Surface kernel in this build - skipping"; exit 0; }
+
+cp "$SRC/vmlinuz" "$B/live/vmlinuz-surface"
+cp "$SRC/initrd.img" "$B/live/initrd-surface.img"
+echo "[askus] surface-boot: kernel $(cat "$SRC/version" 2>/dev/null) added"
+
+CFG="$B/boot/grub/grub.cfg"
+[ -f "$CFG" ] || { echo "[askus] surface-boot: $CFG missing - skipping menu entry"; exit 0; }
+
+# Take the kernel options from the first live entry (whichever .cfg it is in)
+OPTS=""
+for f in "$B"/boot/grub/*.cfg; do
+  OPTS=$(awk '$1=="linux" && /boot=live/ && !/failsafe|noapic/ {$1="";$2=""; sub(/^ +/,""); print; exit}' "$f")
+  [ -n "$OPTS" ] && break
+done
+[ -n "$OPTS" ] || OPTS="boot=live components quiet splash username=askus hostname=localhost"
+
+cat >> "$CFG" <<EOF
+
+# ---- ASKus OS: Microsoft Surface ----
+menuentry "ASKus OS (Surface - Secure Boot off)" --id askus-surface {
+	linux	/live/vmlinuz-surface $OPTS
+	initrd	/live/initrd-surface.img
+}
+if [ "\${grub_platform}" = "efi" -a "\${lockdown}" != "y" ]; then
+	if smbios --type 1 --get-string 4 --set askus_vendor; then
+		smbios --type 1 --get-string 5 --set askus_product
+		if regexp 'Microsoft' "\${askus_vendor}"; then
+			if regexp '^Surface' "\${askus_product}"; then
+				set default="askus-surface"
+				set fallback="0"
+			fi
+		fi
+	fi
+fi
+EOF
+echo "[askus] surface-boot: GRUB entry added (auto-selected on Surface with Secure Boot off)"

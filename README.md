@@ -57,6 +57,7 @@ sudo ./build.sh
 | Most Windows/Linux PCs | Restart and press the boot-menu key (**F12**, F11, F9, Esc or F8 depending on the brand), then pick the USB stick. Secure Boot works (Debian's signed shim). |
 | Intel Macs | Hold **Option (⌥)** at startup and pick "EFI Boot". On T2 Macs, first allow external boot in *Startup Security Utility*. |
 | Apple Silicon Macs (M1–M4), ARM | **Not supported.** These need an ARM build. |
+| Microsoft Surface (Intel: Pro 3–10, Laptop, Book, Go) | **Turn Secure Boot off first:** shut down, hold **Volume Up** + press **Power**, open *Security → Secure Boot → Disabled*. Then shut down, hold **Volume Down** + press **Power** to boot from USB. ASKus OS detects the Surface and starts the **ASKus OS (Surface)** entry by itself, which adds the [linux-surface](https://github.com/linux-surface/linux-surface) drivers for the keyboard cover, touchpad and touchscreen. With Secure Boot on, the normal entry starts instead (keyboard cover and touch won't work; a USB mouse/keyboard will). |
 
 At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to the end of the `linux` line. The whole OS then loads into RAM: it runs faster and you can unplug the stick. You need about 4 GB of free RAM, and Persistent Storage isn't available in this mode.
 
