@@ -15,7 +15,9 @@ How an update works:
      on this stick; every unchanged chunk is copied from the stick (and checked against
      its SHA-256 fingerprint) and only the changed chunks are downloaded, over 8 Tor
      circuits at once. If that isn't possible, the whole image is downloaded.
-  2. Its SHA-256 is checked against the release's SHA256SUMS.
+  2. Its SHA-256 is checked against the release's SHA256SUMS, which must be signed with
+     the ASKus release key. The version is taken from that signed file (not from the
+     release tag), so an older signed image can't be passed off as an update.
   3. The running system is moved off the USB stick: its squashfs is copied into RAM
      and the loop device is switched over to the copy (LOOP_CHANGE_FD).
   4. The new image is written to the start of the stick, read back and verified, and
@@ -31,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -45,6 +48,7 @@ RAM_DIR = "/run/askus/update-ram"
 SQUASH_RAM = "/run/askus/rootfs-ram"
 TOR = "socks5h://127.0.0.1:9050"
 LOOP_CHANGE_FD = 0x4C06
+BLKFLSBUF = 0x1261
 CHUNK = 4 * 1024 * 1024
 
 
@@ -155,7 +159,7 @@ def cmd_check(as_json):
     newer = build_id_of(tag) > build_id_of(cur["TAG"]) and bool(pieces)
     if newer:
         try:
-            verified_sums(assets)
+            signed_image(assets, tag, cur["TAG"])
         except Exception as e:  # noqa: BLE001
             res = {"ok": False, "current": cur["TAG"], "latest": tag,
                    "error": str(e) if isinstance(e, Failure) else
@@ -214,22 +218,53 @@ def verified_sums(assets):
     sig = next((a for a in assets if a["name"] == "SHA256SUMS.sig"), None)
     if not sums:
         raise Failure("the newest release has no SHA256SUMS")
-    text = curl([sums["url"]])
-    if not os.path.isfile(SIGNERS):          # developer build without a release key
-        return text
+    if not os.path.isfile(SIGNERS):
+        raise Failure("this ASKus OS has no release key built in, so it can't check updates - "
+                      "flash the newest ISO with balenaEtcher instead")
     if not sig:
         raise Failure("the newest release is NOT signed with the ASKus release key - it will not be installed")
-    sig_path = "/run/askus/SHA256SUMS.sig"
-    os.makedirs("/run/askus", exist_ok=True)
-    with open(sig_path, "w") as f:
-        f.write(curl([sig["url"]]))
-    r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", SIGNERS, "-I", SIG_NAMESPACE,
-                        "-n", SIG_NAMESPACE, "-s", sig_path],
-                       input=text, capture_output=True, text=True)
+    text = curl([sums["url"]])
+    # A private temporary file: `check` runs as the desktop user, who can't write to /run/askus.
+    with tempfile.TemporaryDirectory(prefix="askus-update-") as tmp:
+        sig_path = os.path.join(tmp, "SHA256SUMS.sig")
+        with open(sig_path, "w") as f:
+            f.write(curl([sig["url"]]))
+        r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", SIGNERS, "-I", SIG_NAMESPACE,
+                            "-n", SIG_NAMESPACE, "-s", sig_path],
+                           input=text, capture_output=True, text=True)
     if r.returncode != 0:
         raise Failure("the newest release has an INVALID signature - it will not be installed. "
                       "Someone may have tampered with it.")
     return text
+
+
+SIGNED_ISO = re.compile(r"askus-os-(\d{12})\.iso")
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def signed_image(assets, tag, current_tag):
+    """Check the newest release against its SIGNED SHA256SUMS.
+    Returns (iso_name, pieces, sha256). The build number is read from the image name in the
+    signed file, not from the release tag: anyone who can publish a GitHub release controls
+    the tag, and could otherwise re-publish an old (genuinely signed, but vulnerable) image
+    as the "newest" one."""
+    iso_name, pieces, _ = image_assets(assets)
+    if not pieces:
+        raise Failure("the newest release has no system image")
+    listed = {}
+    for line in verified_sums(assets).splitlines():
+        f = line.split()
+        if len(f) == 2 and SHA256_HEX.fullmatch(f[0].lower()):
+            listed[f[1].lstrip("*")] = f[0].lower()
+    images = [n for n in listed if SIGNED_ISO.fullmatch(n)]
+    if images != [iso_name]:
+        raise Failure("the newest release doesn't match its signed file list - it will not be installed")
+    build_id = int(SIGNED_ISO.fullmatch(iso_name).group(1))
+    if build_id != build_id_of(tag):
+        raise Failure("the newest release's version doesn't match its signed image - it will not be installed")
+    if build_id <= build_id_of(current_tag):
+        raise Failure("the newest release is not newer than the version you run - it will not be installed")
+    return iso_name, pieces, listed[iso_name]
 
 
 TOR_ISOLATED = "127.0.0.1:9150"      # SocksPort with IsolateSOCKSAuth: each username = its own circuit
@@ -255,14 +290,17 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
     except (OSError, ValueError):
         state = {}
     jobs = queue.Queue()
+    wanted = {}                                  # state key -> every chunk id that must end up done
     have = {"bytes": 0}
     lock = threading.Lock()
     if ranges is not None:                        # delta mode: only these byte ranges
         done_set = set(state.get("delta", []))
         have["bytes"] = already
+        wanted["delta"] = set()
         for p, a, b in ranges:
             out = os.path.join(dest, p["name"])
             rid = f'{p["name"]}:{a}-{b}'
+            wanted["delta"].add(rid)
             if rid in done_set:
                 have["bytes"] += b - a + 1
             else:
@@ -276,6 +314,7 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
             with open(out, "ab") as f:            # preallocate (sparse) so chunks can land anywhere
                 f.truncate(p["size"])
         n = (p["size"] + CHUNK_DL - 1) // CHUNK_DL
+        wanted[key] = set(range(n))
         for i in range(n):
             a = i * CHUNK_DL
             b = min(p["size"], a + CHUNK_DL) - 1
@@ -297,20 +336,24 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
                "--connect-timeout", "60", "--speed-limit", "20000", "--speed-time", "60",
                "-r", f"{a}-{b}", "-H", "User-Agent: askus-update",
                "-w", "%{stderr}%{http_code}", p["url"]]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         pos = a
         fd = os.open(out, os.O_WRONLY)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             while True:
                 buf = proc.stdout.read(1024 * 1024)
                 if not buf:
                     break
-                if pos + len(buf) > b + 1:
+                over = pos + len(buf) > b + 1
+                if over:
                     buf = buf[: b + 1 - pos]
                 os.pwrite(fd, buf, pos)
                 pos += len(buf)
                 with lock:
                     have["bytes"] += len(buf)
+                if over:            # more than asked for: the server ignored the range
+                    proc.kill()
+                    break
         finally:
             os.close(fd)
             proc.stdout.close()
@@ -328,22 +371,25 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
         return True
 
     def worker(w):
-        while True:
-            try:
-                p, key, out, i, a, b = jobs.get_nowait()
-            except queue.Empty:
-                return
-            for attempt in range(8):
-                ident = f"askus-update-{w}-{attempt}-{random.getrandbits(48):x}"   # fresh circuit per try
-                if fetch(p, out, a, b, ident):
-                    with lock:
-                        state[key] = sorted(set(state[key]) | {i})
-                        save_state()
-                    break
-                time.sleep(3 + attempt * 2)
-            else:
-                errors.append(p["name"])
-                return
+        try:
+            while True:
+                try:
+                    p, key, out, i, a, b = jobs.get_nowait()
+                except queue.Empty:
+                    return
+                for attempt in range(8):
+                    ident = f"askus-update-{w}-{attempt}-{random.getrandbits(48):x}"   # fresh circuit per try
+                    if fetch(p, out, a, b, ident):
+                        with lock:
+                            state[key] = sorted(set(state[key]) | {i})
+                            save_state()
+                        break
+                    time.sleep(3 + attempt * 2)
+                else:
+                    errors.append(p["name"])
+                    return
+        except Exception as e:  # noqa: BLE001 - e.g. disk full: a dead worker must not look like success
+            errors.append(f"{e.__class__.__name__}: {e}")
 
     stop = threading.Event()
 
@@ -368,7 +414,8 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
     finally:
         stop.set()
         t.join()
-    if errors or not jobs.empty():
+    incomplete = any(not ids <= set(state.get(k, [])) for k, ids in wanted.items())
+    if errors or not jobs.empty() or incomplete:
         raise Failure("the download kept failing - check your connection and try again (it will resume)")
 
 
@@ -635,16 +682,7 @@ def cmd_apply():
         if build_id_of(tag) <= build_id_of(cur["TAG"]):
             write_status(state="done", step="ASKus OS is already up to date", progress=100, reboot=False)
             return 0
-        iso_name, pieces, sums = image_assets(assets)
-        if not pieces or not sums:
-            raise Failure("the newest release has no system image or no SHA256SUMS")
-        expected = None
-        for line in verified_sums(assets).splitlines():
-            f = line.split()
-            if len(f) == 2 and f[1].lstrip("*") == iso_name:
-                expected = f[0].lower()
-        if not expected:
-            raise Failure("SHA256SUMS does not list the system image")
+        _, pieces, expected = signed_image(assets, tag, cur["TAG"])
         total = sum(p["size"] for p in pieces)
 
         disk = boot_disk()
@@ -674,6 +712,8 @@ def cmd_apply():
         for f in os.listdir(dest):
             if f not in {p["name"] for p in pieces} | {STATE_NAME, VERIFIED_NAME}:
                 os.remove(os.path.join(dest, f))
+        if dest == RAM_DIR:   # may be left over from an earlier attempt sized for another release
+            sh("mount", "-o", f"remount,size={need}", dest, check=True)
 
         paths = [os.path.join(dest, p["name"]) for p in pieces]
         ok, new_index = fetch_image(cur, assets, pieces, dest, total, expected, 8,
@@ -693,11 +733,17 @@ def cmd_apply():
         try:
             for path in paths:
                 with open(path, "rb") as f:
-                    while True:
-                        b = f.read(CHUNK)
+                    while written < total:          # never more than the verified size
+                        b = f.read(min(CHUNK, total - written))
                         if not b:
                             break
-                        os.write(fd, b)
+                        view = memoryview(b)
+                        while view:
+                            n = os.write(fd, view)
+                            if n <= 0:
+                                raise Failure("could not write to the USB stick. Do not restart; try the "
+                                              "update again, or flash the ISO with balenaEtcher")
+                            view = view[n:]
                         written += len(b)
                         if written % (16 * CHUNK) < CHUNK:
                             os.fsync(fd)
@@ -707,6 +753,9 @@ def cmd_apply():
             os.fsync(fd)
         finally:
             os.close(fd)
+        if written != total:
+            raise Failure("the downloaded image changed before it was written. Do not restart; "
+                          "try the update again, or flash the ISO with balenaEtcher")
 
         # put the Persistent Storage entry back into the new partition table
         if persist:
@@ -728,6 +777,11 @@ def cmd_apply():
         left = total
         first = True
         with open(disk, "rb", buffering=0) as f:
+            # drop the cached copy of what was just written, so this really reads the stick
+            try:
+                fcntl.ioctl(f.fileno(), BLKFLSBUF)
+            except OSError:
+                os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
             while left > 0:
                 b = f.read(min(CHUNK, left))
                 if not b:
@@ -804,16 +858,7 @@ def cmd_prefetch():
         if build_id_of(tag) <= build_id_of(cur["TAG"]):
             write_status(state="idle", step="up to date")
             return 0
-        iso_name, pieces, sums = image_assets(assets)
-        if not pieces:
-            return 0
-        expected = None
-        for line in verified_sums(assets).splitlines():       # refuses unsigned / tampered releases
-            f = line.split()
-            if len(f) == 2 and f[1].lstrip("*") == iso_name:
-                expected = f[0].lower()
-        if not expected:
-            return 0
+        _, pieces, expected = signed_image(assets, tag, cur["TAG"])   # refuses unsigned / tampered / older
         total = sum(p["size"] for p in pieces)
         if shutil.disk_usage(PERSIST_MNT).free < total + 500e6:
             write_status(state="idle", step="not enough space in Persistent Storage for a background download")
