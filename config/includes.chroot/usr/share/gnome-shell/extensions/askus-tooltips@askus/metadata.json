@@ -1,0 +1,6 @@
+{
+  "uuid": "askus-tooltips@askus",
+  "name": "ASKus Button Names",
+  "description": "Shows the name of each button in the top-right menu (Power Off, Settings, Lock...) when you hover over it.",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}

@@ -50,7 +50,7 @@ natural-scroll=true
 two-finger-scrolling-enabled=true
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com', 'askus-tooltips@askus']
 favorite-apps=['askus-tor-browser.desktop', 'askus-everyday-browser.desktop', 'askus-assistant.desktop', 'org.gnome.Nautilus.desktop', 'electrum.desktop', 'org.keepassxc.KeePassXC.desktop', 'org.kde.kleopatra.desktop', 'org.mozilla.Thunderbird.desktop', 'thunderbird.desktop', 'askus-tor-status.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop']
 welcome-dialog-last-shown-version='999'
 disable-user-extensions=false

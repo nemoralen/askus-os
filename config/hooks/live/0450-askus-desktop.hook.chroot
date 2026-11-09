@@ -75,6 +75,11 @@ if [ -f /etc/bluetooth/main.conf ]; then
   else
     sed -i '/^\[Policy\]/a AutoEnable=false' /etc/bluetooth/main.conf || true
   fi
+  # Random, changing Bluetooth address when the computer advertises itself (BLE privacy)
+  grep -qE '^#?Privacy' /etc/bluetooth/main.conf \
+    && sed -i -E 's/^#?Privacy *=.*/Privacy = device/' /etc/bluetooth/main.conf \
+    || sed -i '/^\[General\]/a Privacy = device' /etc/bluetooth/main.conf
+  systemctl unmask bluetooth.service 2>/dev/null || true
   systemctl enable bluetooth.service 2>/dev/null || true
 fi
 exit 0
