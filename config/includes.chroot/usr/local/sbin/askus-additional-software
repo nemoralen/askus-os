@@ -1,0 +1,111 @@
+#!/bin/bash
+# ASKus OS "Additional Software": Debian programs you chose are reinstalled at every start.
+#   askus-additional-software status        -> persistence=yes|no, list of packages
+#   askus-additional-software remove PKG    -> stop reinstalling PKG (needs no admin password)
+#   askus-additional-software boot          -> run by askus-additional-software.service
+#   askus-additional-software add PKG...    -> only via askus-additional-software-install
+#                                              (admin password) - installs now over Tor
+# The packages (and the .deb files of what they need) are kept in Persistent Storage under
+# /var/lib/askus/additional-software, so they reinstall at startup even without a network.
+set -uo pipefail
+DIR=/var/lib/askus/additional-software
+LIST=$DIR/packages.list
+DEBS=$DIR/debs
+LOG=/run/askus/additional-software.log
+U=askus
+export DEBIAN_FRONTEND=noninteractive
+
+die() { echo "error: $*" >&2; exit 1; }
+log() { mkdir -p /run/askus; echo "$(date '+%F %T') $*" >> "$LOG"; }
+[ "$(id -u)" = 0 ] || die "must run as root"
+persistent() { mountpoint -q "$DIR"; }
+valid() { [[ "$1" =~ ^[a-z0-9][a-z0-9+.-]{1,80}$ ]]; }
+packages() { [ -f "$LIST" ] && grep -E '^[a-z0-9][a-z0-9+.-]+$' "$LIST" | sort -u; }
+
+notify() {   # notify the desktop user
+  local uid; uid=$(id -u $U 2>/dev/null) || return 0
+  [ -S "/run/user/$uid/bus" ] || return 0
+  runuser -u $U -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    notify-send --app-name="Additional Software" --icon=system-software-install "$@" 2>/dev/null || true
+}
+
+wait_for_tor() {
+  for _ in $(seq 1 120); do
+    curl -s -m 10 --proxy socks5h://127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null \
+      | grep -q '"IsTor":true' && return 0
+    sleep 5
+  done
+  return 1
+}
+
+apt_update_if_old() {
+  local stamp=/var/lib/apt/periodic/askus-update-stamp
+  if [ ! -f "$stamp" ] || [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -gt 21600 ]; then
+    apt-get update -qq && { mkdir -p "$(dirname "$stamp")"; touch "$stamp"; }
+  fi
+}
+
+save_debs() {   # keep the .deb files of the packages and their extra dependencies
+  mkdir -p "$DEBS/partial"
+  apt-get install -y -qq --reinstall --download-only -o Dir::Cache::archives="$DEBS" "$@" >/dev/null 2>&1 || true
+  apt-get autoclean -qq -o Dir::Cache::archives="$DEBS" >/dev/null 2>&1 || true
+  rm -rf "$DEBS/partial"
+}
+
+cmd=${1:-status}; shift || true
+case "$cmd" in
+  status)
+    persistent && echo "persistence=yes" || echo "persistence=no"
+    packages | sed 's/^/package=/'
+    ;;
+  remove)
+    valid "${1:-}" || die "bad package name"
+    persistent || die "Persistent Storage is locked"
+    grep -vx -- "$1" "$LIST" > "$LIST.new" 2>/dev/null; mv "$LIST.new" "$LIST"
+    echo "removed=$1 (it stays installed until you restart)"
+    ;;
+  add)
+    [ "${ASKUS_AS_ADMIN:-}" = 1 ] || die "use askus-additional-software-install (needs the administration password)"
+    [ $# -ge 1 ] || die "usage: add PKG..."
+    for p in "$@"; do valid "$p" || die "bad package name: $p"; done
+    wait_for_tor || die "Tor is not connected"
+    apt_update_if_old || die "could not reach the Debian servers through Tor"
+    apt-cache show "$@" >/dev/null 2>&1 || die "package not found in Debian: $*"
+    apt-get install -y -q "$@" || die "installation failed"
+    if persistent; then
+      mkdir -p "$DIR"; touch "$LIST"
+      for p in "$@"; do grep -qx -- "$p" "$LIST" || echo "$p" >> "$LIST"; done
+      save_debs $(packages)
+      echo "saved=yes"
+    else
+      echo "saved=no (Persistent Storage is locked: installed for this session only)"
+    fi
+    ;;
+  boot)
+    persistent || exit 0
+    mapfile -t PKGS < <(packages)
+    [ ${#PKGS[@]} -gt 0 ] || exit 0
+    log "reinstalling: ${PKGS[*]}"
+    OFFLINE=no
+    if ls "$DEBS"/*.deb >/dev/null 2>&1 && dpkg -i "$DEBS"/*.deb >>"$LOG" 2>&1; then
+      OFFLINE=yes
+      log "installed from Persistent Storage"
+      notify "Additional software installed" "${PKGS[*]}"
+    else
+      log "offline install incomplete - trying through Tor"
+      dpkg --configure -a >>"$LOG" 2>&1 || true
+    fi
+    # Online: install anything missing and pick up security updates, then refresh the saved copies
+    if wait_for_tor; then
+      apt_update_if_old >>"$LOG" 2>&1 || true
+      if apt-get install -y -q "${PKGS[@]}" >>"$LOG" 2>&1; then
+        save_debs "${PKGS[@]}"
+        log "up to date"
+        [ "$OFFLINE" = yes ] || notify "Additional software installed" "${PKGS[*]}"
+      else
+        notify "Additional software" "Some programs could not be installed - open Additional Software for details."
+      fi
+    fi
+    ;;
+  *) die "usage: askus-additional-software status | remove PKG | boot" ;;
+esac

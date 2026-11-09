@@ -1,0 +1,9 @@
+[Unit]
+Description=ASKus OS: reinstall your Additional Software from Persistent Storage
+After=tor@default.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/askus-additional-software boot
+Nice=10
+TimeoutStartSec=45min

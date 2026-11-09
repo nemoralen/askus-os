@@ -1,0 +1,149 @@
+#!/bin/bash
+# ASKus OS: open / close VeraCrypt volumes (drives, partitions and file containers).
+#   askus-veracrypt list                     -> candidate devices as JSON
+#   askus-veracrypt opened                   -> currently opened volumes as JSON
+#   askus-veracrypt unlock PATH [--hidden] [--system] [--pim N] [--keyfile FILE]...
+#                                            password on stdin (one line) -> prints mount point
+#   askus-veracrypt lock NAME                -> unmount + close
+# Run through pkexec by the "Unlock VeraCrypt Volumes" app. Needs no admin password:
+# it can only open VeraCrypt volumes you have the password for, never the ASKus stick.
+set -euo pipefail
+U=askus
+MEDIA=/media/$U
+PREFIX=askus-vc-
+
+die() { echo "error: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "must run as root (pkexec)"
+
+boot_disk() {
+  local src
+  src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+  [ -n "$src" ] || src=$(blkid -t LABEL=ASKUS_OS -o device 2>/dev/null | grep -v '^/dev/sr' | head -n1 || true)
+  [ -n "$src" ] && lsblk -no PKNAME "$src" 2>/dev/null | head -n1
+}
+
+list() {
+  local boot; boot=$(boot_disk || true)
+  python3 - "$boot" <<'PY'
+import json, subprocess, sys
+boot = sys.argv[1]
+d = json.loads(subprocess.run(["lsblk", "-J", "-b", "-o",
+    "NAME,PATH,SIZE,FSTYPE,TYPE,MOUNTPOINT,LABEL,MODEL,TRAN,RM,PKNAME"],
+    capture_output=True, text=True).stdout or '{"blockdevices":[]}')
+out = []
+def walk(devs, parent=None):
+    for b in devs:
+        kids = b.get("children") or []
+        top = parent or b
+        if (top.get("name") != boot and b.get("type") in ("disk", "part") and not kids
+                and not b.get("fstype") and not b.get("mountpoint") and (b.get("size") or 0) > 2*1024*1024
+                and not b.get("name", "").startswith(("loop", "sr", "zram", "dm-"))):
+            out.append({"path": b["path"], "size": b.get("size") or 0,
+                        "model": (top.get("model") or "").strip(),
+                        "removable": bool(top.get("rm")), "transport": top.get("tran") or ""})
+        walk(kids, top)
+walk(d.get("blockdevices", []))
+print(json.dumps(out))
+PY
+}
+
+opened() {
+  python3 - <<'PY'
+import json, os, subprocess
+out = []
+for n in sorted(os.listdir("/dev/mapper")):
+    if not n.startswith("askus-vc-"):
+        continue
+    mp = subprocess.run(["findmnt", "-no", "TARGET", "/dev/mapper/" + n], capture_output=True, text=True).stdout.strip()
+    src = ""
+    try:
+        src = open(f"/run/askus/veracrypt/{n}.src").read().strip()
+    except OSError:
+        pass
+    out.append({"name": n, "mountpoint": mp, "source": src})
+print(json.dumps(out))
+PY
+}
+
+valid_file() {   # file containers: only regular files of the user, not symlinks into the system
+  local f; f=$(readlink -f -- "$1")
+  [ -f "$f" ] || return 1
+  case "$f" in /home/$U/*|/media/$U/*|/run/media/$U/*|/run/askus/persistence/Persistent/*) ;; *) return 1;; esac
+  echo "$f"
+}
+
+unlock() {
+  local target=$1; shift
+  local opts=(--type tcrypt --veracrypt) keyfiles=() dev loop="" name
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --hidden) opts+=(--tcrypt-hidden);;
+      --system) opts+=(--tcrypt-system);;
+      --pim) shift; [[ "$1" =~ ^[0-9]{1,7}$ ]] || die "PIM must be a number"; [ "$1" = 0 ] || opts+=(--veracrypt-pim "$1");;
+      --keyfile) shift; kf=$(valid_file "$1") || die "keyfile must be one of your files"; opts+=(--key-file "$kf");;
+      *) die "unknown option $1";;
+    esac
+    shift
+  done
+  IFS= read -r PW || true
+
+  if [ -b "$target" ]; then
+    list | python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in [d["path"] for d in json.load(sys.stdin)] else 1)' "$target" \
+      || die "that device can't be opened here"
+    dev=$target
+  else
+    f=$(valid_file "$target") || die "file containers must be in your Home folder, Persistent Storage or a USB drive"
+    loop=$(losetup -f --show -- "$f")
+    dev=$loop
+  fi
+  name="$PREFIX$(date +%s%N | tail -c 7)"
+  if ! printf '%s' "$PW" | cryptsetup open "${opts[@]}" "$dev" "$name" 2>/tmp/askus-vc.err; then
+    [ -n "$loop" ] && losetup -d "$loop" || true
+    grep -qi "no key available\|wrong" /tmp/askus-vc.err && die "wrong password, PIM or keyfile (or try the hidden / system volume option)"
+    die "could not open the volume: $(tail -n1 /tmp/askus-vc.err)"
+  fi
+  rm -f /tmp/askus-vc.err
+  mkdir -p /run/askus/veracrypt
+  echo "$target" > "/run/askus/veracrypt/$name.src"
+  [ -n "$loop" ] && echo "$loop" > "/run/askus/veracrypt/$name.loop"
+
+  local fstype label mp uidopt=()
+  fstype=$(blkid -s TYPE -o value "/dev/mapper/$name" 2>/dev/null || true)
+  label=$(blkid -s LABEL -o value "/dev/mapper/$name" 2>/dev/null | tr -cd 'A-Za-z0-9 _.-' || true)
+  mp="$MEDIA/${label:-VeraCrypt}"
+  [ -e "$mp" ] && mp="$mp-${name#$PREFIX}"
+  mkdir -p "$mp"
+  case "$fstype" in
+    vfat|exfat) uidopt=(-o "uid=$(id -u $U),gid=$(id -g $U),umask=077");;
+    ntfs|ntfs3) fstype=ntfs3; uidopt=(-o "uid=$(id -u $U),gid=$(id -g $U),umask=077");;
+  esac
+  if ! mount ${fstype:+-t "$fstype"} "${uidopt[@]}" -o nosuid,nodev "/dev/mapper/$name" "$mp"; then
+    rmdir "$mp" 2>/dev/null || true
+    echo "opened-unmounted:/dev/mapper/$name"
+    return 0
+  fi
+  case "$fstype" in vfat|exfat|ntfs3) ;; *) chown "$U:$U" "$mp" 2>/dev/null || true;; esac
+  echo "$mp"
+}
+
+lock() {
+  local name=$1
+  [[ "$name" =~ ^${PREFIX}[0-9]+$ ]] || die "bad volume name"
+  local mp; mp=$(findmnt -no TARGET "/dev/mapper/$name" 2>/dev/null || true)
+  if [ -n "$mp" ]; then
+    umount "$mp" || die "the volume is still in use - close the files and windows using it first"
+    rmdir "$mp" 2>/dev/null || true
+  fi
+  cryptsetup close "$name"
+  if [ -f "/run/askus/veracrypt/$name.loop" ]; then losetup -d "$(cat "/run/askus/veracrypt/$name.loop")" || true; fi
+  rm -f "/run/askus/veracrypt/$name".*
+  echo "locked"
+}
+
+case "${1:-}" in
+  list) list;;
+  opened) opened;;
+  unlock) shift; [ $# -ge 1 ] || die "usage: unlock PATH [options]"; unlock "$@";;
+  lock) shift; lock "${1:-}";;
+  *) die "usage: askus-veracrypt list | opened | unlock PATH [--hidden] [--system] [--pim N] [--keyfile F] | lock NAME";;
+esac

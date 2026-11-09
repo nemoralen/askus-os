@@ -1,0 +1,12 @@
+{
+  "version": "2.6",
+  "connection_type": "socket_file",
+  "socket_file_path": "/run/askus-tor/control",
+  "auth_type": "no_auth",
+  "auth_password": "",
+  "socks_address": "127.0.0.1",
+  "socks_port": 9050,
+  "use_autoupdate": false,
+  "bridges_enabled": false,
+  "locale": "en"
+}

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Unlock VeraCrypt Volumes
+Comment=Open VeraCrypt drives, partitions and file containers
+Exec=/usr/local/bin/askus-veracrypt-gui
+Icon=drive-harddisk-encrypted
+Categories=Utility;Security;
+Keywords=veracrypt;truecrypt;encrypted;container;volume;unlock;

@@ -54,3 +54,10 @@ gnome-backgrounds
 gnome-shell-extension-desktop-icons-ng
 # "Open in Terminal" in Files
 nautilus-extension-gnome-terminal
+# Anonymous file sharing + Tor circuit viewer (both use the filtered control socket)
+onionshare
+onioncircuits
+python3-stem
+# For "My Apps" (e.g. Smart PDF Maker): PDF library for Python
+python3-fitz
+python3-pymupdf

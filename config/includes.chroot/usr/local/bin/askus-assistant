@@ -27,7 +27,7 @@ if command -v firejail >/dev/null 2>&1; then
        --private="$DIR" --private-tmp \
        --noroot --caps.drop=all --seccomp --nonewprivs --nogroups --restrict-namespaces \
        --protocol=unix,inet,inet6 --novideo \
-       --blacklist=/run/askus --blacklist=/opt/tor-browser --blacklist=/etc/tor \
+       --blacklist=/run/askus --blacklist=/run/askus-tor --blacklist=/opt/tor-browser --blacklist=/etc/tor \
        --blacklist=/media --blacklist=/mnt --blacklist=/run/media --blacklist=/run/live \
        /usr/bin/python3 "$APP" "$@"
 else

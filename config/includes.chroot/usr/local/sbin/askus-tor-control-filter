@@ -1,0 +1,246 @@
+#!/usr/bin/python3
+"""ASKus OS: filtered Tor control connection for desktop apps (like Tails' onion-grater).
+
+OnionShare and Onion Circuits need to talk to Tor's control port. The real control port
+can do dangerous things (e.g. "GETINFO address" reveals your real IP address, SETCONF
+can turn off the protections), so apps never get it. Instead this small service offers
+a control socket at /run/askus-tor/control that only lets through what those apps need:
+
+  * reading circuit / stream status, relay info and country lookups (Onion Circuits)
+  * closing a circuit, asking for new circuits (SIGNAL NEWNYM)
+  * creating / removing onion services that point to THIS computer only (OnionShare)
+
+Everything else is answered with "510 Command filtered". Authentication to the real
+control port is done here with Tor's cookie; apps connect without a password.
+"""
+import os
+import pwd
+import re
+import socket
+import socketserver
+import sys
+import threading
+
+SOCKET_DIR = "/run/askus-tor"
+SOCKET_PATH = SOCKET_DIR + "/control"
+UPSTREAM = ("127.0.0.1", 9051)
+COOKIE = "/var/lib/tor/control_auth_cookie"
+SOCKET_OWNER = "askus"
+
+GETINFO_ALLOWED = (
+    re.compile(r"^version$"),
+    re.compile(r"^circuit-status$"),
+    re.compile(r"^stream-status$"),
+    re.compile(r"^ns/id/[0-9A-Fa-f$]{40,41}$"),
+    re.compile(r"^ns/name/[A-Za-z0-9]{1,19}$"),
+    re.compile(r"^md/id/[0-9A-Fa-f$]{40,41}$"),
+    re.compile(r"^ip-to-country/[0-9a-fA-F.:\[\]]+$"),
+    re.compile(r"^status/bootstrap-phase$"),
+    re.compile(r"^status/circuit-established$"),
+    re.compile(r"^status/enough-dir-info$"),
+    re.compile(r"^onions/(current|detached)$"),
+)
+EVENTS_ALLOWED = {"CIRC", "STREAM", "ORCONN", "HS_DESC", "HS_DESC_CONTENT", "STATUS_CLIENT",
+                  "STATUS_GENERAL", "BW", "CIRC_BW", "STREAM_BW", "CIRC_MINOR", "NETWORK_LIVENESS"}
+SIGNALS_ALLOWED = {"NEWNYM"}
+LOCAL_TARGET = re.compile(r"^(?:\d{1,5}|(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}|unix:/.*)$")
+
+
+def log(*a):
+    print("askus-tor-control-filter:", *a, file=sys.stderr, flush=True)
+
+
+def read_message(f):
+    """Read one complete control-protocol reply (all lines) from file object f."""
+    lines = []
+    while True:
+        line = f.readline()
+        if not line:
+            raise EOFError
+        lines.append(line)
+        if len(line) >= 4 and line[3:4] == b"+":
+            while True:                       # data block, ends with "."
+                d = f.readline()
+                if not d:
+                    raise EOFError
+                lines.append(d)
+                if d.rstrip(b"\r\n") == b".":
+                    break
+            continue
+        if len(line) >= 4 and line[3:4] == b" ":
+            return b"".join(lines)
+        if len(line) < 4:
+            return b"".join(lines)
+
+
+def check_command(line):
+    """Return (allowed_line_or_None, error_text). May rewrite the line."""
+    text = line.decode("utf-8", "replace").rstrip("\r\n")
+    if not text:
+        return None, "Empty command"
+    if text.startswith("+"):
+        return None, "Multi-line commands are not allowed"
+    parts = text.split()
+    cmd = parts[0].upper()
+    args = parts[1:]
+
+    if cmd == "GETINFO":
+        if not args or not all(any(p.match(a) for p in GETINFO_ALLOWED) for a in args):
+            return None, "GETINFO key not allowed"
+        return line, None
+    if cmd == "SETEVENTS":
+        keep = [a for a in args if a.upper() in EVENTS_ALLOWED]
+        return ("SETEVENTS " + " ".join(keep)).rstrip().encode() + b"\r\n", None
+    if cmd == "SIGNAL":
+        if len(args) == 1 and args[0].upper() in SIGNALS_ALLOWED:
+            return line, None
+        return None, "Signal not allowed"
+    if cmd == "CLOSECIRCUIT":
+        if args and args[0].isdigit():
+            return line, None
+        return None, "Bad CLOSECIRCUIT"
+    if cmd == "ADD_ONION":
+        for a in args[1:]:
+            k, _, v = a.partition("=")
+            k = k.upper()
+            if k == "PORT":
+                _, _, target = v.partition(",")
+                if target and not LOCAL_TARGET.match(target):
+                    return None, "Onion services may only point to this computer"
+            elif k == "FLAGS":
+                if "NONANONYMOUS" in v.upper():
+                    return None, "Non-anonymous onion services are not allowed"
+            elif k not in ("CLIENTAUTHV3", "CLIENTAUTH", "MAXSTREAMS"):
+                return None, "ADD_ONION option not allowed: " + k
+        return line, None
+    if cmd == "DEL_ONION":
+        if len(args) == 1 and re.match(r"^[a-z2-7]{16,56}$", args[0]):
+            return line, None
+        return None, "Bad DEL_ONION"
+    if cmd in ("ONION_CLIENT_AUTH_ADD", "ONION_CLIENT_AUTH_REMOVE"):
+        if args and re.match(r"^[a-z2-7]{56}$", args[0]):
+            return line, None
+        return None, "Bad onion client auth command"
+    if cmd == "QUIT":
+        return line, None
+    return None, "Command filtered"
+
+
+class Handler(socketserver.StreamRequestHandler):
+    def handle(self):
+        wlock = threading.Lock()
+
+        def send(data):
+            with wlock:
+                self.wfile.write(data)
+                self.wfile.flush()
+
+        try:
+            up = socket.create_connection(UPSTREAM, timeout=10)
+        except OSError as e:
+            send(b"551 Tor is not running\r\n")
+            log("cannot reach Tor:", e)
+            return
+        up.settimeout(None)
+        uf = up.makefile("rb")
+        try:
+            cookie = open(COOKIE, "rb").read().hex()
+            up.sendall(f"AUTHENTICATE {cookie}\r\n".encode())
+            if not read_message(uf).startswith(b"250"):
+                send(b"515 Filter could not authenticate to Tor\r\n")
+                return
+            up.sendall(b"GETINFO version\r\n")
+            m = re.search(rb"version=(\S+)", read_message(uf))
+            tor_version = m.group(1).decode() if m else "0.4.8.0"
+        except (OSError, EOFError) as e:
+            send(b"551 Tor control error\r\n")
+            log("auth failed:", e)
+            return
+
+        replies = []                 # upstream replies waiting to be delivered, in order
+        cv = threading.Condition()
+
+        def pump():
+            """Forward upstream messages; async events (650) go straight to the app."""
+            try:
+                while True:
+                    msg = read_message(uf)
+                    if msg.startswith(b"650"):
+                        send(msg)
+                    else:
+                        with cv:
+                            replies.append(msg)
+                            cv.notify_all()
+            except (EOFError, OSError):
+                with cv:
+                    replies.append(None)
+                    cv.notify_all()
+
+        t = threading.Thread(target=pump, daemon=True)
+        t.start()
+        authed = False
+        try:
+            while True:
+                line = self.rfile.readline()
+                if not line:
+                    break
+                word = line.split(b" ", 1)[0].strip().upper()
+                if word == b"PROTOCOLINFO":
+                    send(b"250-PROTOCOLINFO 1\r\n250-AUTH METHODS=NULL\r\n"
+                         + f'250-VERSION Tor="{tor_version}"\r\n'.encode() + b"250 OK\r\n")
+                    continue
+                if word == b"AUTHENTICATE":
+                    authed = True
+                    send(b"250 OK\r\n")
+                    continue
+                if word == b"AUTHCHALLENGE":
+                    send(b"510 Command filtered\r\n")
+                    continue
+                if not authed:
+                    send(b"514 Authentication required.\r\n")
+                    continue
+                ok, err = check_command(line)
+                if ok is None:
+                    send(f"510 {err}\r\n".encode())
+                    continue
+                up.sendall(ok if ok.endswith(b"\n") else ok + b"\r\n")
+                with cv:
+                    while not replies:
+                        cv.wait()
+                    msg = replies.pop(0)
+                if msg is None:
+                    break
+                send(msg)
+                if word == b"QUIT":
+                    break
+        except (OSError, BrokenPipeError):
+            pass
+        finally:
+            try:
+                up.close()
+            except OSError:
+                pass
+
+
+class Server(socketserver.ThreadingUnixStreamServer):
+    daemon_threads = True
+
+
+def main():
+    os.makedirs(SOCKET_DIR, exist_ok=True)
+    os.chmod(SOCKET_DIR, 0o755)
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+    srv = Server(SOCKET_PATH, Handler)
+    try:
+        pw = pwd.getpwnam(SOCKET_OWNER)
+        os.chown(SOCKET_PATH, pw.pw_uid, pw.pw_gid)
+    except KeyError:
+        pass
+    os.chmod(SOCKET_PATH, 0o600)
+    log("listening on", SOCKET_PATH)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

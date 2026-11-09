@@ -1,0 +1,215 @@
+#!/usr/bin/python3
+"""ASKus OS: Unlock VeraCrypt Volumes - open VeraCrypt drives, partitions and file containers."""
+import json
+import os
+import subprocess
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+HELPER = "/usr/local/sbin/askus-veracrypt"
+
+
+def run(args, stdin=None, done=None):
+    def work():
+        try:
+            p = subprocess.run(["pkexec", HELPER] + args, input=stdin, capture_output=True, text=True, timeout=300)
+            res = (p.returncode == 0, p.stdout.strip(), (p.stderr or "").strip().replace("error: ", ""))
+        except Exception as e:  # noqa: BLE001
+            res = (False, "", str(e))
+        if done:
+            GLib.idle_add(done, *res)
+    threading.Thread(target=work, daemon=True).start()
+
+
+def human(n):
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000:
+            return f"{n:.0f} {u}"
+        n /= 1000
+    return f"{n:.0f} PB"
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Unlock VeraCrypt Volumes", default_width=520, default_height=600)
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Look for drives again")
+        refresh.connect("clicked", lambda *_: self.reload())
+        hb.pack_start(refresh)
+        view.add_top_bar(hb)
+        self.page = Adw.PreferencesPage()
+        view.set_content(self.page)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+
+        self.g_open = Adw.PreferencesGroup(title="Open volumes")
+        self.g_dev = Adw.PreferencesGroup(title="Drives and partitions",
+                                          description="Plug in the USB drive or disk that holds the VeraCrypt volume.")
+        g_file = Adw.PreferencesGroup(title="File containers")
+        row = Adw.ActionRow(title="Open a file container…", subtitle="A VeraCrypt volume stored as a file", activatable=True)
+        row.add_prefix(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        row.connect("activated", self.pick_file)
+        g_file.add(row)
+        for g in (self.g_open, self.g_dev, g_file):
+            self.page.add(g)
+        self.rows = []
+        self.reload()
+
+    def toast(self, t):
+        self.toasts.add_toast(Adw.Toast(title=t, timeout=5))
+
+    def clear(self):
+        for g, r in self.rows:
+            g.remove(r)
+        self.rows = []
+
+    def add(self, g, r):
+        g.add(r)
+        self.rows.append((g, r))
+
+    def reload(self):
+        def got_open(ok, out, err):
+            def got_dev(ok2, out2, err2):
+                self.clear()
+                vols = json.loads(out) if ok and out else []
+                for v in vols:
+                    r = Adw.ActionRow(title=os.path.basename(v.get("mountpoint") or v["name"]),
+                                      subtitle=v.get("source", ""))
+                    r.add_prefix(Gtk.Image.new_from_icon_name("changes-allow-symbolic"))
+                    if v.get("mountpoint"):
+                        b = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
+                        b.connect("clicked", lambda *_a, m=v["mountpoint"]: Gio.AppInfo.launch_default_for_uri(
+                            GLib.filename_to_uri(m, None), None))
+                        r.add_suffix(b)
+                    b = Gtk.Button(label="Lock", valign=Gtk.Align.CENTER)
+                    b.add_css_class("destructive-action")
+                    b.connect("clicked", lambda *_a, n=v["name"]: self.lock(n))
+                    r.add_suffix(b)
+                    self.add(self.g_open, r)
+                if not vols:
+                    self.add(self.g_open, Adw.ActionRow(title="No VeraCrypt volume is open"))
+                devs = json.loads(out2) if ok2 and out2 else []
+                for d in devs:
+                    title = d.get("model") or ("USB drive" if d.get("transport") == "usb" else "Drive")
+                    r = Adw.ActionRow(title=f"{title} — {human(d['size'])}", subtitle=d["path"], activatable=True)
+                    r.add_prefix(Gtk.Image.new_from_icon_name(
+                        "drive-removable-media-symbolic" if d.get("removable") else "drive-harddisk-symbolic"))
+                    r.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+                    r.connect("activated", lambda *_a, p=d["path"]: self.ask(p))
+                    self.add(self.g_dev, r)
+                if not devs:
+                    self.add(self.g_dev, Adw.ActionRow(title="No unknown or encrypted drive found",
+                                                       subtitle="Already-opened and normal drives are not shown"))
+            run(["list"], done=got_dev)
+        run(["opened"], done=got_open)
+
+    def pick_file(self, *_):
+        dlg = Gtk.FileDialog(title="Choose the VeraCrypt file container")
+        dlg.set_initial_folder(Gio.File.new_for_path(os.path.expanduser("~")))
+
+        def chosen(d, res):
+            try:
+                f = d.open_finish(res)
+            except GLib.Error:
+                return
+            if f and f.get_path():
+                self.ask(f.get_path())
+        dlg.open(self, None, chosen)
+
+    def ask(self, target):
+        dlg = Adw.Dialog(title="Unlock VeraCrypt volume", content_width=420)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=18,
+                      margin_start=18, margin_end=18)
+        tv = Adw.ToolbarView()
+        tv.add_top_bar(Adw.HeaderBar())
+        tv.set_content(box)
+        dlg.set_child(tv)
+        box.append(Gtk.Label(label=os.path.basename(target), wrap=True, css_classes=["heading"]))
+        lst = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+        pw = Adw.PasswordEntryRow(title="Password")
+        pim = Adw.EntryRow(title="PIM (leave empty if you did not set one)")
+        hidden = Adw.SwitchRow(title="Hidden volume")
+        system = Adw.SwitchRow(title="Windows system partition")
+        for r in (pw, pim, hidden, system):
+            lst.append(r)
+        keyfiles = []
+        kf_row = Adw.ActionRow(title="Keyfiles", subtitle="None", activatable=True)
+        kf_row.add_suffix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
+
+        def add_kf(*_):
+            fd = Gtk.FileDialog(title="Choose keyfiles")
+
+            def got(d, res):
+                try:
+                    files = d.open_multiple_finish(res)
+                except GLib.Error:
+                    return
+                for i in range(files.get_n_items()):
+                    p = files.get_item(i).get_path()
+                    if p:
+                        keyfiles.append(p)
+                kf_row.set_subtitle(", ".join(os.path.basename(k) for k in keyfiles) or "None")
+            fd.open_multiple(self, None, got)
+        kf_row.connect("activated", add_kf)
+        lst.append(kf_row)
+        box.append(lst)
+        btn = Gtk.Button(label="Unlock", css_classes=["suggested-action", "pill"], halign=Gtk.Align.CENTER)
+        spinner = Gtk.Spinner()
+        box.append(btn)
+        box.append(spinner)
+
+        def go(*_):
+            args = ["unlock", target]
+            if hidden.get_active():
+                args.append("--hidden")
+            if system.get_active():
+                args.append("--system")
+            if pim.get_text().strip():
+                args += ["--pim", pim.get_text().strip()]
+            for k in keyfiles:
+                args += ["--keyfile", k]
+            btn.set_sensitive(False)
+            spinner.start()
+
+            def done(ok, out, err):
+                spinner.stop()
+                btn.set_sensitive(True)
+                if ok:
+                    dlg.close()
+                    if out.startswith("/"):
+                        self.toast(f"Opened at {out}")
+                        Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(out, None), None)
+                    else:
+                        self.toast("Opened (unknown file system - not mounted)")
+                    self.reload()
+                else:
+                    self.toast(err or "Could not open the volume")
+            run(args, stdin=pw.get_text() + "\n", done=done)
+        btn.connect("clicked", go)
+        pw.connect("entry-activated", go)
+        dlg.present(self)
+
+    def lock(self, name):
+        def done(ok, out, err):
+            self.toast("Locked" if ok else (err or "Could not lock"))
+            self.reload()
+        run(["lock", name], done=done)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.VeraCrypt")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

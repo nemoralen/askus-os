@@ -1,0 +1,170 @@
+#!/usr/bin/python3
+"""ASKus OS "My Apps": your own apps, kept privately in Persistent Storage.
+
+Copy an app's folder into  ~/Persistent/My Apps/  and it appears in the app grid.
+Supported (detected automatically):
+  * web apps     - a folder with index.html            (e.g. Redline Desk)
+  * Python apps  - a folder with a .pyw (or main.py)   (e.g. Smart PDF Maker)
+Optional  askus-app.ini  in the folder:
+  [App]
+  Name=My App
+  Run=start.pyw          ; or index.html
+  Icon=assets/icon.png
+  Network=no             ; yes = allow internet THROUGH TOR (default: no network at all)
+
+Runs at login and keeps watching the folder (askus-myapps --watch).
+"""
+import configparser
+import hashlib
+import os
+import re
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+APPS = os.path.join(HOME, "Persistent", "My Apps")
+OUT = os.path.join(HOME, ".local", "share", "applications")
+PREFIX = "askus-myapp-"
+README = """Put your own apps here - one folder per app.
+
+ASKus OS adds them to the app grid automatically:
+  - a folder with index.html      -> opens as a web app (Redline Desk...)
+  - a folder with a .pyw / main.py -> runs as a Python app (Smart PDF Maker...)
+
+They run in a sandbox with NO network and no access to your wallet, keys,
+passwords, email or Tor. Their own folder and your other files are available.
+Because this folder is in Persistent Storage, your apps stay private: they are
+not part of the public ASKus OS image.
+
+Optional: an askus-app.ini file in the app folder (Name=, Run=, Icon=, Network=).
+"""
+
+
+def detect(d):
+    cfg = configparser.ConfigParser()
+    ini = os.path.join(d, "askus-app.ini")
+    app = {"name": os.path.basename(d), "run": None, "icon": None, "network": "no"}
+    if os.path.isfile(ini):
+        try:
+            cfg.read(ini)
+            s = cfg["App"]
+            app["name"] = s.get("Name", app["name"])
+            app["run"] = s.get("Run")
+            app["icon"] = s.get("Icon")
+            app["network"] = s.get("Network", "no").lower()
+        except Exception:  # noqa: BLE001
+            pass
+    files = sorted(os.listdir(d))
+    if not app["run"]:
+        pyw = [f for f in files if f.lower().endswith(".pyw")]
+        if pyw:
+            app["run"] = pyw[0]
+        elif "index.html" in files:
+            app["run"] = "index.html"
+        elif "main.py" in files:
+            app["run"] = "main.py"
+    if not app["run"] or not os.path.isfile(os.path.join(d, app["run"])):
+        return None
+    if not app["icon"]:
+        cands = []
+        for root, _dirs, fs in os.walk(d):
+            if root.count(os.sep) - d.count(os.sep) > 1:
+                continue
+            for f in fs:
+                lf = f.lower()
+                if lf.endswith((".png", ".svg")) and ("icon" in lf or "logo" in lf):
+                    cands.append(os.path.join(root, f))
+        cands.sort(key=lambda p: (not p.lower().endswith(".png"), "logo" in p.lower(), len(p)))
+        app["icon"] = cands[0] if cands else None
+    elif not os.path.isabs(app["icon"]):
+        app["icon"] = os.path.join(d, app["icon"])
+    return app
+
+
+def slug(d):
+    return re.sub(r"[^a-z0-9]+", "-", os.path.basename(d).lower()).strip("-")[:40] + "-" + \
+        hashlib.sha1(d.encode()).hexdigest()[:6]
+
+
+def esc(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def scan():
+    os.makedirs(OUT, exist_ok=True)
+    wanted = {}
+    if os.path.isdir(APPS):
+        for name in sorted(os.listdir(APPS)):
+            d = os.path.join(APPS, name)
+            if not os.path.isdir(d) or name.startswith("."):
+                continue
+            app = detect(d)
+            if not app:
+                continue
+            fn = PREFIX + slug(d) + ".desktop"
+            kind = "Web app" if app["run"].lower().endswith((".html", ".htm")) else "Python app"
+            wanted[fn] = (
+                "[Desktop Entry]\nType=Application\n"
+                f"Name={app['name']}\n"
+                f"Comment=My App ({kind}) - runs sandboxed"
+                + (" with no network" if app["network"] != "yes" else ", network through Tor") + "\n"
+                f'Exec=/usr/local/bin/askus-myapp-run "{esc(d)}"\n'
+                f"Icon={app['icon'] or 'application-x-executable'}\n"
+                "Categories=Office;X-ASKus-MyApps;\nStartupNotify=true\n"
+                f"StartupWMClass=askus-myapp-{slug(d)}\n"
+            )
+    changed = False
+    for f in os.listdir(OUT):
+        if f.startswith(PREFIX) and f not in wanted:
+            os.remove(os.path.join(OUT, f))
+            changed = True
+    for fn, body in wanted.items():
+        p = os.path.join(OUT, fn)
+        old = open(p).read() if os.path.exists(p) else None
+        if old != body:
+            with open(p, "w") as fh:
+                fh.write(body)
+            changed = True
+    return changed
+
+
+def ensure_folder():
+    if os.path.ismount(os.path.join(HOME, "Persistent")) or os.path.isdir(os.path.join(HOME, "Persistent")):
+        if os.path.ismount(os.path.join(HOME, "Persistent")):
+            os.makedirs(APPS, exist_ok=True)
+            r = os.path.join(APPS, "README.txt")
+            if not os.path.exists(r):
+                with open(r, "w") as fh:
+                    fh.write(README)
+
+
+def fingerprint():
+    if not os.path.isdir(APPS):
+        return None
+    fp = []
+    for name in sorted(os.listdir(APPS)):
+        d = os.path.join(APPS, name)
+        try:
+            fp.append((name, os.stat(d).st_mtime, tuple(sorted(os.listdir(d))) if os.path.isdir(d) else ()))
+        except OSError:
+            pass
+    return fp
+
+
+def main():
+    if "--watch" not in sys.argv:
+        ensure_folder()
+        scan()
+        return
+    last = object()
+    while True:
+        ensure_folder()
+        fp = fingerprint()
+        if fp != last:
+            scan()
+            last = fp
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()

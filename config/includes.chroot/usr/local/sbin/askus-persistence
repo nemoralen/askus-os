@@ -22,6 +22,7 @@ FEATURES=(
   "thunderbird:$H/.thunderbird:user:0700"
   "network-connections:/etc/NetworkManager/system-connections:root:0700"
   "tor-bridges:/etc/tor/torrc.d:root:0755"
+  "additional-software:/var/lib/askus/additional-software:root:0755"
 )
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -80,6 +81,7 @@ bind_features() {
   chown "$U:$U" "$H/.config" 2>/dev/null || true
   systemctl try-restart tor@default.service tor.service 2>/dev/null || true
   nmcli connection reload 2>/dev/null || true
+  systemctl start --no-block askus-additional-software.service 2>/dev/null || true
 }
 
 open_and_mount() {

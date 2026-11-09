@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus My Apps
+Comment=Adds your own apps from Persistent Storage to the app grid
+Exec=/usr/local/bin/askus-myapps --watch
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

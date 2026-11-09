@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Onion Circuits
+Comment=See which Tor relays your connections go through
+Exec=env TOR_CONTROL_SOCKET=/run/askus-tor/control onioncircuits
+Icon=onioncircuits
+Categories=Network;
+Keywords=tor;circuits;relays;

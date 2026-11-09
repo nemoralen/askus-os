@@ -1,0 +1,11 @@
+#!/bin/bash
+# Toggle GNOME's on-screen keyboard. Typing passwords with it helps against
+# hardware keyloggers (a device between the keyboard and the computer).
+K=org.gnome.desktop.a11y.applications
+if [ "$(gsettings get $K screen-keyboard-enabled)" = "true" ]; then
+  gsettings set $K screen-keyboard-enabled false
+  notify-send --app-name=ASKus "Screen keyboard off"
+else
+  gsettings set $K screen-keyboard-enabled true
+  notify-send --app-name=ASKus "Screen keyboard on" "Tap any text field and the keyboard appears."
+fi

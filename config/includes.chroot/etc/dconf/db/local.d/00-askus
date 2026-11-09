@@ -132,3 +132,8 @@ theme-variant='dark'
 
 [org/gnome/desktop/sound]
 event-sounds=false
+
+[org/gnome/desktop/a11y]
+# Accessibility menu in the top bar: Screen Keyboard (type without a physical keyboard,
+# which helps against hardware keyloggers), large text, zoom...
+always-show-universal-access-status=true

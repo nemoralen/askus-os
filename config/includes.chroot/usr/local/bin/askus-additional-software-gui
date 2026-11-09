@@ -1,0 +1,154 @@
+#!/usr/bin/python3
+"""ASKus OS: Additional Software - Debian programs that reinstall automatically at every start."""
+import re
+import subprocess
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
+
+HELPER = "/usr/local/sbin/askus-additional-software"
+INSTALL = "/usr/local/sbin/askus-additional-software-install"
+NAME = re.compile(r"^[a-z0-9][a-z0-9+.-]{1,80}$")
+
+
+def run(cmd, done):
+    def work():
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            res = (p.returncode == 0, p.stdout, (p.stderr or "").strip().splitlines()[-1:] or [""])
+        except Exception as e:  # noqa: BLE001
+            res = (False, "", [str(e)])
+        GLib.idle_add(done, res[0], res[1], res[2][0].replace("error: ", ""))
+    threading.Thread(target=work, daemon=True).start()
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Additional Software", default_width=520, default_height=620)
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+        view.set_content(page)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+
+        info = Adw.PreferencesGroup(
+            description="Programs from Debian that ASKus installs again every time it starts. They are kept "
+                        "in your encrypted Persistent Storage, so they reinstall even without a network. "
+                        "Adding a program needs the administration password (set it on the Welcome screen).")
+        page.add(info)
+        self.status = Adw.ActionRow(title="Checking…")
+        info.add(self.status)
+
+        add = Adw.PreferencesGroup(title="Add a program")
+        self.search = Adw.EntryRow(title="Program name or what it does (e.g. vlc, “video player”)")
+        self.search.connect("entry-activated", self.do_search)
+        btn = Gtk.Button(icon_name="system-search-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Search")
+        btn.connect("clicked", self.do_search)
+        self.search.add_suffix(btn)
+        add.add(self.search)
+        page.add(add)
+        self.results = Adw.PreferencesGroup()
+        page.add(self.results)
+        self.result_rows = []
+
+        self.mine = Adw.PreferencesGroup(title="Reinstalled at every start")
+        page.add(self.mine)
+        self.mine_rows = []
+        self.reload()
+
+    def toast(self, t):
+        self.toasts.add_toast(Adw.Toast(title=t, timeout=6))
+
+    def reload(self):
+        def done(ok, out, err):
+            for r in self.mine_rows:
+                self.mine.remove(r)
+            self.mine_rows = []
+            persist = "persistence=yes" in out
+            self.status.set_title("Persistent Storage unlocked ✓" if persist else
+                                  "Persistent Storage is locked - programs you add now are only for this session")
+            pkgs = [l.split("=", 1)[1] for l in out.splitlines() if l.startswith("package=")]
+            for p in pkgs:
+                r = Adw.ActionRow(title=p)
+                b = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Stop reinstalling")
+                b.add_css_class("flat")
+                b.connect("clicked", lambda *_a, n=p: self.remove(n))
+                r.add_suffix(b)
+                self.mine.add(r)
+                self.mine_rows.append(r)
+            if not pkgs:
+                r = Adw.ActionRow(title="Nothing yet")
+                self.mine.add(r)
+                self.mine_rows.append(r)
+        run(["pkexec", HELPER, "status"], done)
+
+    def do_search(self, *_):
+        q = self.search.get_text().strip()
+        if not q:
+            return
+        for r in self.result_rows:
+            self.results.remove(r)
+        self.result_rows = []
+        if NAME.match(q):
+            cands = [(q, "Install the package with exactly this name")]
+        else:
+            cands = []
+        try:
+            out = subprocess.run(["apt-cache", "search", "--names-only" if NAME.match(q) else "--full", q],
+                                 capture_output=True, text=True, timeout=30).stdout
+            for line in out.splitlines()[:25]:
+                n, _, d = line.partition(" - ")
+                if NAME.match(n) and n != q:
+                    cands.append((n, d))
+        except Exception:  # noqa: BLE001
+            pass
+        if not cands:
+            r = Adw.ActionRow(title="Nothing found",
+                              subtitle="The program list is downloaded the first time you add something - try the exact package name.")
+            self.results.add(r)
+            self.result_rows.append(r)
+        for n, d in cands[:20]:
+            r = Adw.ActionRow(title=n, subtitle=d)
+            b = Gtk.Button(label="Install", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            b.connect("clicked", lambda btn, n=n: self.install(n, btn))
+            r.add_suffix(b)
+            self.results.add(r)
+            self.result_rows.append(r)
+
+    def install(self, name, btn):
+        btn.set_sensitive(False)
+        btn.set_label("Installing…")
+
+        def done(ok, out, err):
+            btn.set_label("Installed ✓" if ok else "Install")
+            btn.set_sensitive(not ok)
+            if ok:
+                self.toast(f"{name} installed" + ("" if "saved=yes" in out else " for this session"))
+            else:
+                self.toast(err or f"{name} could not be installed")
+            self.reload()
+        run(["pkexec", INSTALL, name], done)
+
+    def remove(self, name):
+        def done(ok, out, err):
+            self.toast(f"{name} will not be reinstalled after a restart" if ok else (err or "Could not remove"))
+            self.reload()
+        run(["pkexec", HELPER, "remove", name], done)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.AdditionalSoftware")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

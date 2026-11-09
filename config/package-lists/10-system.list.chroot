@@ -36,3 +36,7 @@ xz-utils
 unattended-upgrades
 zstd
 openssh-client
+# VeraCrypt volumes + Windows/exFAT file systems inside them
+cryptsetup
+exfatprogs
+ntfs-3g

@@ -4,7 +4,7 @@ set -eu
 
 # ---- services ----
 systemctl enable nftables.service
-systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer
+systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer askus-tor-control-filter.service
 systemctl enable tor.service || true
 systemctl enable zramswap.service || true
 

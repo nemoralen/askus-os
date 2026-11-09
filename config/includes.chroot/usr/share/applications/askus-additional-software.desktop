@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Additional Software
+Comment=Programs from Debian that ASKus reinstalls at every start
+Exec=/usr/local/bin/askus-additional-software-gui
+Icon=system-software-install
+Categories=System;Settings;PackageManager;
+Keywords=install;software;apt;packages;programs;persistent;

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Install Debian programs now (through Tor) and add them to Additional Software.
+# Polkit asks for the ASKus administration password before this runs.
+[ "$(id -u)" = 0 ] || { echo "error: must run through pkexec" >&2; exit 1; }
+ASKUS_AS_ADMIN=1 exec /usr/local/sbin/askus-additional-software add "$@"

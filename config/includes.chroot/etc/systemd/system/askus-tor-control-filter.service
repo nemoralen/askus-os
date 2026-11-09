@@ -1,0 +1,16 @@
+[Unit]
+Description=ASKus OS: filtered Tor control socket for OnionShare and Onion Circuits
+After=tor@default.service tor.service
+Wants=tor.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/askus-tor-control-filter
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

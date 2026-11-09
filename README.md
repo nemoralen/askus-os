@@ -75,6 +75,21 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 - **Bluetooth:** supported, but **off at startup**, because nearby devices can see a Bluetooth radio. Turn it on from the top-right menu when you need it.
 - **Clock:** if the computer's clock is wrong (common on PCs that also run Windows), ASKus corrects it from the Tor network so Tor can connect. Only the system clock is changed, never the hardware clock Windows uses.
 
+## More tools (like Tails)
+
+- **OnionShare:** share files, receive files or host a small website anonymously through an onion address.
+- **Onion Circuits:** see which Tor relays your connections use, and close a circuit.
+  Both talk to Tor through a **filtered control socket** (`askus-tor-control-filter`, like Tails' onion-grater). It only allows what they need and blocks everything that could reveal your real IP address or change Tor's settings.
+- **Unlock VeraCrypt Volumes:** open VeraCrypt drives, partitions and file containers (password, PIM, hidden and system volumes, keyfiles). No admin password needed.
+- **Screen Keyboard:** type with an on-screen keyboard, which helps against hardware keyloggers. It's also in the top-bar accessibility menu.
+- **Additional Software:** choose Debian programs once, and ASKus reinstalls them at every start from copies kept in Persistent Storage, offline and fast. Adding a program needs the administration password.
+
+## My Apps (your own apps, kept private)
+
+Copy an app's folder into **Persistent → My Apps** and it appears in the app grid within seconds. It works with web apps (a folder with `index.html`) and Python apps (a folder with a `.pyw` or `main.py`). Your apps stay in your encrypted storage and are **not** part of the public ASKus OS image.
+
+Each app runs in a sandbox with **no network** (unless its `askus-app.ini` says `Network=yes`, and then only through Tor). It can't see your wallet, GnuPG/SSH keys, KeePassXC, Thunderbird, Tor Browser or Tor itself.
+
 ## Daily updates (signed)
 
 - **Every day** GitHub builds a fresh ASKus OS with the latest Debian security fixes and Tor Browser, and publishes it under **Releases**. The newest 7 are kept.

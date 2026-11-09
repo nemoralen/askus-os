@@ -29,6 +29,13 @@ for desk in org.keepassxc.KeePassXC.desktop org.kde.kleopatra.desktop kleopatra.
 done
 update-desktop-database -q /usr/local/share/applications 2>/dev/null || true
 
+# ---- Onion Circuits: use ASKus' filtered control socket (our launcher replaces the stock one)
+for d in /usr/share/applications/onioncircuits.desktop /usr/share/applications/org.boum.tails.OnionCircuits.desktop; do
+  [ -f "$d" ] && printf '[Desktop Entry]\nNoDisplay=true\nHidden=true\n' > "/usr/local/share/applications/$(basename "$d")"
+done
+# OnionShare: make the launcher name obvious
+true
+
 # ---- Account picture for the lock screen / user menu
 mkdir -p /var/lib/AccountsService/icons /var/lib/AccountsService/users
 if [ -f /usr/share/askus/png/askus-logo-256.png ]; then
