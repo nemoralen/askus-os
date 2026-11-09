@@ -7,11 +7,12 @@ on:
   schedule:
     - cron: "17 7 * * *"      # every day 07:17 UTC (2:17 AM New York)
   workflow_dispatch:          # "Run workflow" button in the Actions tab
-  push:
-    tags: ["v*"]
 
+# The build itself can't touch the repository or the signing key. Only the "release" job
+# can: it runs in the protected "release" environment (main branch only, and it waits for
+# the owner's approval), which is the only place the signing key is available.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: askus-build
@@ -24,6 +25,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+    outputs:
+      id: ${{ steps.ver.outputs.id }}
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +78,31 @@ jobs:
           fi
           ls -la
 
+      - name: Upload ISO as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: askus-os-iso
+          path: out/*
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: release        # protected: main only + owner approval; holds ASKUS_SIGNING_KEY
+    permissions:
+      contents: write           # publish the release
+      actions: write            # keep the daily schedule enabled
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the built ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: askus-os-iso
+          path: out
+
       - name: Sign the release (ASKus release key)
         # Installed ASKus systems refuse any update whose SHA256SUMS is not signed with this key.
         env:
@@ -102,19 +131,11 @@ jobs:
             -s out/SHA256SUMS.sig < out/SHA256SUMS
           ls -la out
 
-      - name: Upload ISO as workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: askus-os-iso
-          path: out/*
-          retention-days: 7
-          compression-level: 0
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: ASKus OS ${{ steps.ver.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: ASKus OS ${{ needs.build.outputs.tag }}
           make_latest: true
           files: |
             out/*.iso*
@@ -122,7 +143,7 @@ jobs:
             out/SHA256SUMS.sig
           fail_on_unmatched_files: false
           body: |
-            **ASKus OS ${{ steps.ver.outputs.tag }}**, a daily build with the latest Debian security updates and Tor Browser. Signed with the ASKus release key (`SHA256SUMS.sig`).
+            **ASKus OS ${{ needs.build.outputs.tag }}**, a daily build with the latest Debian security updates and Tor Browser. Signed with the ASKus release key (`SHA256SUMS.sig`).
 
             **Already running ASKus OS?** It finds this update by itself at startup. Click **Update now** in the notification, or open **ASKus Update**.
 
@@ -138,11 +159,8 @@ jobs:
 
       - name: Keep the daily schedule alive
         # GitHub pauses scheduled workflows after 60 days without repository activity.
-        run: |
-          LAST=$(git log -1 --format=%ct)
-          if [ $(( $(date +%s) - LAST )) -gt $(( 45*24*3600 )) ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit --allow-empty -m "keepalive: daily build ${{ steps.ver.outputs.tag }}"
-            git push
-          fi
+        # Re-enabling the workflow through the API keeps it running without pushing commits
+        # (pushes to main are protected).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/build-iso.yml/enable" || true
