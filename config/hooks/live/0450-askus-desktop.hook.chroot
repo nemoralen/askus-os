@@ -51,8 +51,21 @@ if [ -d /usr/local/lib/askus/nautilus-scripts ]; then
   cp -f /usr/local/lib/askus/nautilus-scripts/* "$S"/
   chmod 755 "$S"/* /usr/local/lib/askus/nautilus-scripts/*
 fi
-printf '\n' > "/etc/skel/Templates/Text Document.txt"
-printf '# Title\n\n' > "/etc/skel/Templates/Markdown Note.md"
+T=/etc/skel/Templates
+printf '' > "$T/Text Document.txt"
+printf '# Title\n\n' > "$T/Markdown Note.md"
+# Empty office files: LibreOffice opens a 0-byte file as a new document of that type
+: > "$T/Word Document.docx"
+: > "$T/Excel Spreadsheet.xlsx"
+: > "$T/PowerPoint Presentation.pptx"
+: > "$T/Writer Document.odt"
+: > "$T/Calc Spreadsheet.ods"
+printf 'Column A,Column B,Column C\n' > "$T/CSV Table.csv"
+printf '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Arial;}}\\f0\\fs24 \\par}\n' > "$T/Rich Text Document.rtf"
+printf '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>New page</title>\n</head>\n<body>\n\n</body>\n</html>\n' > "$T/Web Page.html"
+printf '#!/usr/bin/env python3\n\n\ndef main():\n    pass\n\n\nif __name__ == "__main__":\n    main()\n' > "$T/Python Script.py"
+printf '#!/bin/bash\nset -euo pipefail\n\n' > "$T/Shell Script.sh"
+: > "$T/Empty File"
 
 # ---- Bluetooth: available, but OFF at startup (it's radio that nearby devices can see).
 # Turn it on from the top-right menu when you need it.

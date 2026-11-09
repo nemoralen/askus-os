@@ -61,3 +61,9 @@ python3-stem
 # For "My Apps" (e.g. Smart PDF Maker): PDF library for Python
 python3-fitz
 python3-pymupdf
+# ---- Office (like Tails): opens the Word/Excel/PowerPoint "New Document" templates
+libreoffice-writer
+libreoffice-calc
+libreoffice-impress
+libreoffice-gtk3
+libreoffice-l10n-en-gb

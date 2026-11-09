@@ -40,3 +40,22 @@ openssh-client
 cryptsetup
 exfatprogs
 ntfs-3g
+# ---- Drivers & firmware (graphics, Wi-Fi, sound, Bluetooth) for everyday PCs and the Surface Pro 9
+firmware-linux
+firmware-linux-nonfree
+firmware-misc-nonfree
+firmware-nvidia-graphics
+firmware-intel-graphics
+firmware-intel-misc
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-mediatek
+firmware-amd-graphics
+firmware-sof-signed
+intel-media-va-driver-non-free
+mesa-va-drivers
+mesa-vulkan-drivers
+libvulkan1
+vulkan-tools
+thermald

@@ -8,7 +8,8 @@ live-config.nocomponents=sudo,openssh-server \
 noswap ipv6.disable=1 \
 init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 slab_nomerge \
 randomize_kstack_offset=on vsyscall=none debugfs=off \
-mitigations=auto"
+mitigations=auto \
+nouveau.config=NvGspRm=1"
 
 lb config noauto \
   --mode debian \

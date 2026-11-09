@@ -22,6 +22,8 @@ titlebar-font='Inter Bold 11'
 action-double-click-titlebar='toggle-maximize'
 
 [org/gnome/mutter]
+# Sharp text on mixed monitors (e.g. a 4K next to a 1080p): allows 125% / 150% scaling
+experimental-features=['scale-monitor-framebuffer', 'xwayland-native-scaling']
 center-new-windows=true
 dynamic-workspaces=true
 edge-tiling=true
@@ -41,6 +43,8 @@ lock-enabled=false
 disable-lock-screen=true
 
 [org/gnome/desktop/peripherals/touchpad]
+# Right-click like Windows: press the bottom-right corner, or tap with two fingers
+click-method='areas'
 tap-to-click=true
 natural-scroll=true
 two-finger-scrolling-enabled=true
