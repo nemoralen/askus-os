@@ -4,7 +4,9 @@ set -eu
 
 # ---- services ----
 systemctl enable nftables.service
-systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer askus-tor-control-filter.service
+systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer askus-tor-control-filter.service askus-panic-keys.service
+# Ctrl+Alt+Delete is the panic key - don't let it start a normal reboot
+systemctl mask ctrl-alt-del.target
 systemctl enable tor.service || true
 systemctl enable zramswap.service || true
 

@@ -1,0 +1,117 @@
+#!/usr/bin/python3
+"""ASKus OS panic key: hold Ctrl+Alt and press Delete 3 times -> emergency power-off.
+
+Runs as root and reads the keyboards directly (/dev/input), so it works everywhere:
+desktop, any app, the lock screen and the login screen. It only reads key presses,
+never stores or sends them anywhere.
+
+Test mode:  askus-panic-keys --test FILE   (FILE holds raw input_event records;
+prints TRIGGER instead of powering off)
+"""
+import os, struct, sys, time, selectors
+
+KEY_DELETE = 111
+CTRL = {29, 97}      # left / right Ctrl
+ALT = {56, 100}      # left / right Alt (AltGr)
+EV_KEY = 1
+PRESSES = 3          # Delete presses needed
+WINDOW = 3.0         # ...within this many seconds
+EVENT = struct.Struct("llHHi")   # struct input_event (64-bit)
+ACTION = "/usr/local/sbin/askus-emergency-shutdown"
+
+
+class Detector:
+    def __init__(self):
+        self.down = set()
+        self.hits = []
+
+    def feed(self, code, value, now):
+        """value: 1 = press, 0 = release, 2 = auto-repeat (ignored). Returns True to fire."""
+        if value == 2:
+            return False
+        if value == 0:
+            self.down.discard(code)
+            if code in CTRL or code in ALT:
+                if not (self.down & CTRL) or not (self.down & ALT):
+                    self.hits = []          # let go of Ctrl or Alt: start over
+            return False
+        self.down.add(code)
+        if code == KEY_DELETE and (self.down & CTRL) and (self.down & ALT):
+            self.hits = [t for t in self.hits if now - t <= WINDOW] + [now]
+            if len(self.hits) >= PRESSES:
+                self.hits = []
+                return True
+        return False
+
+
+def is_keyboard(name):
+    try:
+        with open(f"/sys/class/input/{name}/device/capabilities/key") as f:
+            words = f.read().split()
+    except OSError:
+        return False
+    bits = 0
+    for w in words:                       # most significant word first
+        bits = (bits << 64) | int(w, 16)
+    return bool(bits >> KEY_DELETE & 1) and bool(bits >> 29 & 1)
+
+
+def fire():
+    os.execv(ACTION, [ACTION])
+
+
+def run_test(path):
+    d = Detector()
+    with open(path, "rb") as f:
+        data = f.read()
+    for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+        sec, usec, typ, code, value = EVENT.unpack_from(data, i)
+        if typ == EV_KEY and d.feed(code, value, sec + usec / 1e6):
+            print("TRIGGER")
+            return
+    print("no trigger")
+
+
+def main():
+    sel = selectors.DefaultSelector()
+    opened = {}
+    d = Detector()
+    last_scan = 0.0
+    while True:
+        now = time.monotonic()
+        if now - last_scan > 2:            # pick up keyboards plugged in later (Type Cover, USB)
+            last_scan = now
+            try:
+                names = [n for n in os.listdir("/dev/input") if n.startswith("event")]
+            except OSError:
+                names = []
+            for n in names:
+                if n not in opened and is_keyboard(n):
+                    try:
+                        fd = os.open(f"/dev/input/{n}", os.O_RDONLY | os.O_NONBLOCK)
+                    except OSError:
+                        continue
+                    opened[n] = fd
+                    sel.register(fd, selectors.EVENT_READ, n)
+        for key, _ in sel.select(timeout=1):
+            fd, n = key.fd, key.data
+            try:
+                data = os.read(fd, EVENT.size * 64)
+            except BlockingIOError:
+                continue
+            except OSError:                # keyboard unplugged
+                sel.unregister(fd)
+                os.close(fd)
+                opened.pop(n, None)
+                continue
+            for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, typ, code, value = EVENT.unpack_from(data, i)
+                if typ == EV_KEY and d.feed(code, value, time.monotonic()):
+                    fire()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--test":
+        run_test(sys.argv[2])
+    else:
+        main()

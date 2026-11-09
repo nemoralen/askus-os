@@ -11,7 +11,7 @@ Built on **Debian 13 "trixie"** with Debian `live-build`. The open-source parts 
 | Area | What you get |
 |---|---|
 | **Anonymity** | System Tor with a fail-closed `nftables` firewall: every TCP connection and DNS lookup is forced through Tor, and everything else (UDP, IPv6, LAN) is blocked · Tor Browser (official build, signature-checked at build time) · bridges (obfs4 / Snowflake / meek) · `torsocks`, `nyx` |
-| **Amnesia** | Runs entirely in RAM · freed memory is wiped (`init_on_free=1`) · no swap on disk · powers off at once if the USB stick is pulled out · random MAC address on every connection · no hostname sent over DHCP · UTC clock |
+| **Amnesia** | Runs entirely in RAM · freed memory is wiped (`init_on_free=1`) · no swap on disk · powers off at once if the USB stick is pulled out **or you hold Ctrl+Alt and press Delete 3 times** (panic key - wipes keys and memory, works even on the lock screen) · random MAC address on every connection · no hostname sent over DHCP · UTC clock |
 | **Bitcoin** | **Electrum** wallet, preset to connect through Tor |
 | **Encryption** | **GnuPG** with **Kleopatra** and Seahorse (public/private keys) · **KeePassXC** · LUKS2 encrypted volumes (GNOME Disks) · zuluCrypt (opens VeraCrypt volumes) · `paperkey` |
 | **Metadata & files** | MAT2 / Metadata Cleaner · secure-delete · QR tools |

@@ -1,0 +1,24 @@
+#!/bin/bash
+# ASKus OS emergency shutdown (panic key / like Tails' emergency shutdown).
+# Takes about one second:
+#  1. wipes the Persistent Storage encryption key from memory (the stick stays
+#     encrypted and safe; your passphrase still opens it next time),
+#  2. kills every program, so their memory is freed - and ASKus zeroes freed
+#     memory (init_on_free=1),
+#  3. drops cached file data (also zeroed), then cuts the power.
+# It never touches the internal drive (Windows) or deletes anything on the stick.
+echo 1 > /proc/sys/kernel/sysrq 2>/dev/null
+
+# 1. Forget disk encryption keys (Persistent Storage, VeraCrypt volumes).
+for m in $(dmsetup ls --target crypt 2>/dev/null | awk '{print $1}'); do
+  timeout 1 cryptsetup luksSuspend "$m" 2>/dev/null &
+done
+sleep 0.3
+
+# 2. Kill everything except init and this script -> memory is freed and zeroed.
+kill -9 -1 2>/dev/null
+sleep 0.4
+
+# 3. Free (and so zero) the file cache, then power off right away.
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+echo o > /proc/sysrq-trigger

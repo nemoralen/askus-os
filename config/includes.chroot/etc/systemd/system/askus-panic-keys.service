@@ -1,0 +1,11 @@
+[Unit]
+Description=ASKus OS: panic key (hold Ctrl+Alt, press Delete 3 times = emergency power-off)
+After=systemd-udevd.service
+
+[Service]
+ExecStart=/usr/local/sbin/askus-panic-keys
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

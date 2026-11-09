@@ -137,3 +137,7 @@ event-sounds=false
 # Accessibility menu in the top bar: Screen Keyboard (type without a physical keyboard,
 # which helps against hardware keyloggers), large text, zoom...
 always-show-universal-access-status=true
+
+[org/gnome/settings-daemon/plugins/media-keys]
+# Ctrl+Alt+Delete is the ASKus panic key, not the log-out dialog
+logout=@as []
