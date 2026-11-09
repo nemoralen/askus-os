@@ -97,6 +97,7 @@ Each app runs in a sandbox with **no network** (unless its `askus-app.ini` says 
 - **Inside ASKus OS:** about a minute after Tor connects, ASKus OS checks for a newer build. If there is one, a notification offers **Update now**. You can also open **ASKus Update** from the app grid whenever you like.
 - **Fast downloads through Tor:** the image is fetched in 32 MB pieces over **several Tor circuits at once** (each piece on its own circuit), which is several times faster than one connection, and an interrupted download resumes where it stopped.
 - **Background download:** when Persistent Storage is unlocked, ASKus downloads a new (signed) release quietly in the background, about 10 minutes after startup and then every 6 hours. When it's ready, a notification offers **Install now**, and installing only takes a few minutes.
+- **Fast (delta) updates:** every build publishes a small fingerprint list of its image (`.iso.index.gz`, kept permanently in the `image-indices` release). The updater compares it with the version on your stick, **re-uses every unchanged part from the stick** and downloads only what changed, over **8 Tor circuits** at once. A daily update is usually a small fraction of the 2.8 GB image. Every re-used part is checked against its SHA-256 fingerprint, and the finished image against the signed `SHA256SUMS`, so it's exactly as safe as a full download. If a fast update isn't possible (e.g. a stick from before this feature), it downloads the whole image as before.
 - **What the update does:** it downloads the new image through Tor (into your Persistent Storage if it's unlocked, otherwise into RAM) checks the signature and the SHA-256. It then moves the running system into memory, writes the new version to the USB stick, reads it back to verify it, and keeps your Persistent Storage. Restart and you're on the new version.
 - **Needs:** ASKus OS started from its USB stick and enough free memory (about 3 GB with Persistent Storage unlocked, about 5 GB without). The first 4 GB of the stick are reserved for the system so updates never touch your saved files. That's why Persistent Storage needs a stick of 6 GB or more.
 
@@ -128,7 +129,7 @@ A chat app in the dock with two modes. The window colour always shows which one 
 
 About 1–5 minutes after Tor connects, and then **every 6 hours** while it's running, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. 
 - Core parts (kernel, desktop, boot) aren't changed mid-session. They come with the daily **ASKus Update**, which also makes all updates permanent.
-- **Recommended:** let program updates run automatically, and install the **ASKus Update** at least once a week (it's offered daily; the 2.7 GB download over Tor takes a while).
+- **Recommended:** let program updates run automatically, and install the **ASKus Update** at least once a week (it's offered daily, and fast updates usually download only the changes).
 - To turn this off, set `AUTO_UPDATE=no` in `/etc/askus/autoupdate.conf`.
 
 ## Leak test

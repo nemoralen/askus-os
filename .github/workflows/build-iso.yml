@@ -71,6 +71,10 @@ jobs:
           sudo chown -R "$(id -u)" out
           cd out
           sha256sum "$NAME" > SHA256SUMS            # checksum of the WHOLE iso (used by the in-OS updater)
+          # Fast (delta) updates: fingerprint the image in ~256 KB chunks, so installed systems
+          # download only the chunks that changed and re-use the rest from their USB stick.
+          gcc -O2 -o /tmp/askus-cdc ../tools/askus-cdc.c
+          python3 ../tools/make-index.py "$NAME" "$NAME.index.gz" /tmp/askus-cdc
           # GitHub release files must be < 2 GiB: split if needed.
           # Rejoin on Windows: copy /b NAME.part00 + NAME.part01 NAME   |   Linux/Mac: cat NAME.part* > NAME
           if [ "$(stat -c%s "$NAME")" -gt 2000000000 ]; then
@@ -145,16 +149,29 @@ jobs:
           body: |
             **ASKus OS ${{ needs.build.outputs.tag }}**, a daily build with the latest Debian security updates and Tor Browser. Signed with the ASKus release key (`SHA256SUMS.sig`).
 
-            **Already running ASKus OS?** It finds this update by itself at startup. Click **Update now** in the notification, or open **ASKus Update**.
+            **Already running ASKus OS?** It finds this update by itself and downloads only what changed (usually a small part of the image). Click **Update now** in the notification, or open **ASKus Update**.
 
             **New install:** download the `.iso` (if it's split into `.part00`/`.part01`, join them: Windows `copy /b file.part00 + file.part01 file.iso`, Mac/Linux `cat file.part* > file.iso`), check it against `SHA256SUMS`, then flash it to a USB stick with balenaEtcher.
+
+      - name: Keep this build's update index permanently
+        # Tiny file (~1 MB). Lets a stick of ANY older version still do a fast update,
+        # even after its own release has been removed.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view image-indices --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create image-indices --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+              --title "Update indices (for fast updates)" \
+              --notes "Chunk fingerprints of every ASKus OS build, used by the in-OS updater to download only what changed. Not an installable release."
+          fi
+          gh release upload image-indices out/*.index.gz --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Remove old releases (keep the newest ${{ env.KEEP_RELEASES }})
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[(env.KEEP_RELEASES|tonumber):] | .[].tagName' |
+            --jq 'map(select(.tagName != "image-indices")) | sort_by(.createdAt) | reverse | .[(env.KEEP_RELEASES|tonumber):] | .[].tagName' |
           while read -r t; do echo "deleting old release $t"; gh release delete "$t" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag; done
 
       - name: Keep the daily schedule alive

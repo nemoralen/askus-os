@@ -9,8 +9,12 @@
 
 How an update works:
   1. The newest GitHub Release of UPDATE_REPO (see /etc/askus-release) is fetched
-     through Tor, and the image (one .iso or .iso.partNN pieces) is downloaded into
-     Persistent Storage if it's unlocked, otherwise into RAM.
+     through Tor, and the image (one .iso or .iso.partNN pieces) is put together in
+     Persistent Storage if it's unlocked, otherwise in RAM. FAST (DELTA) UPDATE: the
+     release's chunk index (.iso.index.gz) is compared with the index of the version
+     on this stick; every unchanged chunk is copied from the stick (and checked against
+     its SHA-256 fingerprint) and only the changed chunks are downloaded, over 8 Tor
+     circuits at once. If that isn't possible, the whole image is downloaded.
   2. Its SHA-256 is checked against the release's SHA256SUMS.
   3. The running system is moved off the USB stick: its squashfs is copied into RAM
      and the loop device is switched over to the copy (LOOP_CHANGE_FD).
@@ -231,9 +235,10 @@ def verified_sums(assets):
 TOR_ISOLATED = "127.0.0.1:9150"      # SocksPort with IsolateSOCKSAuth: each username = its own circuit
 CHUNK_DL = 32 * 1024 * 1024           # download unit (a slow circuit only delays its own chunk)
 STATE_NAME = ".chunks.json"
+VERIFIED_NAME = ".verified"
 
 
-def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
+def download(pieces, dest, total, workers=8, label="Downloading through Tor", ranges=None, already=0):
     """Download the image pieces over several Tor circuits at once.
 
     Each piece is split into 32 MB chunks; `workers` threads take chunks from a queue and
@@ -252,7 +257,18 @@ def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
     jobs = queue.Queue()
     have = {"bytes": 0}
     lock = threading.Lock()
-    for p in pieces:
+    if ranges is not None:                        # delta mode: only these byte ranges
+        done_set = set(state.get("delta", []))
+        have["bytes"] = already
+        for p, a, b in ranges:
+            out = os.path.join(dest, p["name"])
+            rid = f'{p["name"]}:{a}-{b}'
+            if rid in done_set:
+                have["bytes"] += b - a + 1
+            else:
+                jobs.put((p, "delta", out, rid, a, b))
+        state["delta"] = sorted(done_set)
+    for p in (pieces if ranges is None else []):
         out = os.path.join(dest, p["name"])
         key = f'{p["name"]}:{p["size"]}'
         done_set = set(state.get(key, []))
@@ -279,8 +295,9 @@ def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
     def fetch(p, out, a, b, ident):
         cmd = ["curl", "-sfL", "--proxy", f"socks5h://{ident}:x@{TOR_ISOLATED}",
                "--connect-timeout", "60", "--speed-limit", "20000", "--speed-time", "60",
-               "-r", f"{a}-{b}", "-H", "User-Agent: askus-update", p["url"]]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+               "-r", f"{a}-{b}", "-H", "User-Agent: askus-update",
+               "-w", "%{stderr}%{http_code}", p["url"]]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         pos = a
         fd = os.open(out, os.O_WRONLY)
         try:
@@ -298,8 +315,13 @@ def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
             os.close(fd)
             proc.stdout.close()
             rc = proc.wait()
+            code = proc.stderr.read().decode(errors="replace").strip()[-3:]
+            proc.stderr.close()
         got = pos - a
-        if rc != 0 or got != b - a + 1:
+        # 206 = the server sent exactly the part we asked for (a server that ignores the
+        # range would send the file from the start - never accept that)
+        partial_ok = code == "206" or (a == 0 and b + 1 == p["size"] and code == "200")
+        if rc != 0 or got != b - a + 1 or not partial_ok:
             with lock:
                 have["bytes"] -= got
             return False
@@ -348,6 +370,211 @@ def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
         t.join()
     if errors or not jobs.empty():
         raise Failure("the download kept failing - check your connection and try again (it will resume)")
+
+
+# ---------------------------------------------------------------- fast (delta) updates
+INDEX_SUFFIX = ".index.gz"
+INDEX_TAG = "image-indices"            # permanent release that keeps every build's index
+SAVED_INDEX_DIR = PERSIST_MNT + "/.askus-index"
+MERGE_GAP = 512 * 1024                 # fetch small unchanged gaps too: fewer, bigger requests
+
+
+def curl_bytes(url, timeout=300):
+    cmd = ["curl", "-fsSL", "--proxy", TOR, "--retry", "3", "--max-time", str(timeout),
+           "-H", "User-Agent: askus-update", url]
+    return subprocess.run(cmd, capture_output=True, check=True).stdout
+
+
+def parse_index(raw):
+    """-> (image size, [(offset, length, sha256)]) or raises ValueError."""
+    import gzip
+    lines = gzip.decompress(raw).decode().split("\n")
+    head = lines[0].split()
+    if head[:2] != ["askus-delta-index", "1"]:
+        raise ValueError("not an ASKus delta index")
+    chunks, pos = [], 0
+    for line in lines[1:]:
+        if not line:
+            continue
+        o, n, h = line.split()
+        o, n = int(o), int(n)
+        if o != pos or n <= 0 or len(h) != 64:
+            raise ValueError("broken delta index")
+        chunks.append((o, n, h.lower()))
+        pos += n
+    if pos != int(head[3]):
+        raise ValueError("delta index size mismatch")
+    return pos, chunks
+
+
+def index_name_for(tag):
+    m = re.search(r"(\d{12})", tag or "")
+    return f"askus-os-{m.group(1)}.iso{INDEX_SUFFIX}" if m else None
+
+
+def old_index(cur):
+    """Index of the version on this stick: saved copy, else the permanent index release,
+    else that version's own release. It does not need to be trusted: every chunk taken
+    from the stick is checked against the NEW (and finally the signed) fingerprints."""
+    name = index_name_for(cur.get("TAG"))
+    if not name:
+        return None
+    local = os.path.join(SAVED_INDEX_DIR, name)
+    if os.path.isfile(local):
+        try:
+            return parse_index(open(local, "rb").read())
+        except (OSError, ValueError):
+            pass
+    repo = cur["UPDATE_REPO"]
+    for url in (f"https://github.com/{repo}/releases/download/{INDEX_TAG}/{name}",
+                f"https://github.com/{repo}/releases/download/{cur['TAG']}/{name}"):
+        try:
+            return parse_index(curl_bytes(url, timeout=180))
+        except (subprocess.CalledProcessError, ValueError, OSError):
+            continue
+    return None
+
+
+def save_index(raw, tag):
+    """Remember the index of the version just installed (for the next fast update)."""
+    name = index_name_for(tag)
+    if not raw or not name or not os.path.ismount(PERSIST_MNT):
+        return
+    try:
+        os.makedirs(SAVED_INDEX_DIR, mode=0o700, exist_ok=True)
+        for f in os.listdir(SAVED_INDEX_DIR):
+            if f.endswith(INDEX_SUFFIX) and f != name:
+                os.remove(os.path.join(SAVED_INDEX_DIR, f))
+        with open(os.path.join(SAVED_INDEX_DIR, name), "wb") as f:
+            f.write(raw)
+    except OSError:
+        pass
+
+
+def delta_prepare(pieces, dest, new_chunks, old_chunks, disk):
+    """Copy every unchanged chunk from the stick into the new image pieces.
+    Returns ([(offset, end) ranges still needed], bytes re-used)."""
+    where = {}
+    for o, n, h in old_chunks:
+        where.setdefault(h, (o, n))
+    starts, pos = [], 0
+    for p in pieces:
+        out = os.path.join(dest, p["name"])
+        if not os.path.exists(out) or os.path.getsize(out) != p["size"]:
+            with open(out, "ab") as f:
+                f.truncate(p["size"])
+        starts.append(pos)
+        pos += p["size"]
+    fds = [os.open(os.path.join(dest, p["name"]), os.O_WRONLY) for p in pieces]
+
+    def put(off, data):
+        while data:
+            i = max(k for k in range(len(pieces)) if starts[k] <= off)
+            rel = off - starts[i]
+            part = data[: pieces[i]["size"] - rel]
+            os.pwrite(fds[i], part, rel)
+            off += len(part)
+            data = data[len(part):]
+
+    need, reused = [], 0
+    src = os.open(disk, os.O_RDONLY)
+    try:
+        for k, (o, n, h) in enumerate(new_chunks):
+            hit = where.get(h)
+            ok = False
+            if hit and hit[1] == n:
+                data = os.pread(src, n, hit[0])
+                if len(data) == n and hashlib.sha256(data).hexdigest() == h:
+                    put(o, data)
+                    reused += n
+                    ok = True
+            if not ok:
+                need.append((o, o + n - 1))
+            if k % 200 == 0:
+                write_status(state="running",
+                             step=f"Re-using the unchanged parts already on your USB stick "
+                                  f"({k * 100 // max(len(new_chunks), 1)}%)…",
+                             progress=round(3 + 2 * k / max(len(new_chunks), 1), 1))
+    finally:
+        os.close(src)
+        for fd in fds:
+            os.fsync(fd)
+            os.close(fd)
+    return need, reused
+
+
+def ranges_for_pieces(need, pieces):
+    """Merge nearby ranges, cut them to <= 32 MB and map them onto the image pieces."""
+    merged = []
+    for a, b in sorted(need):
+        if merged and a - merged[-1][1] - 1 <= MERGE_GAP and b - merged[-1][0] + 1 <= CHUNK_DL:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    out, starts, pos = [], [], 0
+    for p in pieces:
+        starts.append(pos)
+        pos += p["size"]
+    for a, b in merged:
+        while a <= b:
+            i = max(k for k in range(len(pieces)) if starts[k] <= a)
+            end = min(b, starts[i] + pieces[i]["size"] - 1, a + CHUNK_DL - 1)
+            out.append((pieces[i], a - starts[i], end - starts[i]))
+            a = end + 1
+    return out
+
+
+def fetch_image(cur, assets, pieces, dest, total, expected, workers, label, check_label):
+    """Get the new image into `dest` - fast (only the changes) when possible, otherwise in
+    full - and verify it against the signed SHA256SUMS. Returns (ok, new index bytes)."""
+    paths = [os.path.join(dest, p["name"]) for p in pieces]
+    mark = os.path.join(dest, VERIFIED_NAME)
+    new_raw, plan = None, None
+    idx = next((a for a in assets if a["name"].endswith(INDEX_SUFFIX)), None)
+    try:
+        if idx:
+            new_raw = curl_bytes(idx["url"], timeout=180)
+    except Exception:  # noqa: BLE001
+        new_raw = None
+
+    def finish(ok):
+        if ok:
+            with open(mark, "w") as f:
+                f.write(expected)
+        return ok, new_raw
+
+    # Already downloaded and verified in the background? Re-check it and use it.
+    try:
+        if open(mark).read().strip() == expected and \
+                all(os.path.getsize(x) == p["size"] for x, p in zip(paths, pieces)):
+            if sha256_of_pieces(paths, total, check_label, 60, 6) == expected:
+                return finish(True)
+    except OSError:
+        pass
+    try:
+        if new_raw:
+            write_status(state="running", step="Checking what changed in the new version…", progress=2)
+            ntotal, nchunks = parse_index(new_raw)
+            disk = boot_disk()
+            old = old_index(cur) if (disk and ntotal == total) else None
+            if old:
+                need, reused = delta_prepare(pieces, dest, nchunks, old[1], disk)
+                plan = (ranges_for_pieces(need, pieces), reused)
+    except Exception:  # noqa: BLE001 - any problem: just download everything
+        plan = None
+    if plan:
+        ranges, reused = plan
+        size = sum(b - a + 1 for _, a, b in ranges)
+        download(pieces, dest, total, workers=workers, ranges=ranges, already=total - size,
+                 label=f"{label} - only the changes, {size/1e6:.0f} MB")
+        if sha256_of_pieces(paths, total, check_label, 60, 6) == expected:
+            return finish(True)
+        try:                                   # should not happen: fall back to a full download
+            os.remove(os.path.join(dest, STATE_NAME))
+        except OSError:
+            pass
+    download(pieces, dest, total, workers=workers, label=label)
+    return finish(sha256_of_pieces(paths, total, check_label, 60, 6) == expected)
 
 
 def sha256_of_pieces(paths, total, step, base, span):
@@ -445,14 +672,14 @@ def cmd_apply():
                 sh("mount", "-t", "tmpfs", "-o", f"size={need},mode=0700", "tmpfs", dest, check=True)
         # remove leftovers of older downloads
         for f in os.listdir(dest):
-            if f not in {p["name"] for p in pieces} | {STATE_NAME}:
+            if f not in {p["name"] for p in pieces} | {STATE_NAME, VERIFIED_NAME}:
                 os.remove(os.path.join(dest, f))
 
-        download(pieces, dest, total)
         paths = [os.path.join(dest, p["name"]) for p in pieces]
-        got = sha256_of_pieces(paths, total, "Checking the download (SHA-256)…", 60, 6)
-        if got != expected:
-            for p in paths + [os.path.join(dest, STATE_NAME)]:
+        ok, new_index = fetch_image(cur, assets, pieces, dest, total, expected, 8,
+                                    "Downloading through Tor", "Checking the download (SHA-256)…")
+        if not ok:
+            for p in paths + [os.path.join(dest, STATE_NAME), os.path.join(dest, VERIFIED_NAME)]:
                 if os.path.exists(p):
                     os.remove(p)
             raise Failure("the download is damaged (checksum mismatch) and was deleted — try again")
@@ -522,6 +749,7 @@ def cmd_apply():
 
         for p in paths:
             os.remove(p)
+        save_index(new_index, tag)
         write_status(state="done", step=f"ASKus OS {tag} is installed. Restart to use it.", progress=100,
                      reboot=True, tag=tag)
         return 0
@@ -560,7 +788,7 @@ def notify_user(title, body, action_label=None):
 def cmd_prefetch():
     """Download a newer, correctly signed release into Persistent Storage in the background,
     so that "Update now" only has to write it to the stick. Runs from askus-update-prefetch.timer.
-    Only when Persistent Storage is unlocked (never fills RAM), through Tor, gently (3 circuits)."""
+    Only when Persistent Storage is unlocked (never fills RAM), through Tor, gently (4 circuits)."""
     global STATUS
     if os.geteuid() != 0:
         sys.exit("must run as root")
@@ -593,13 +821,13 @@ def cmd_prefetch():
         dest = os.path.join(PERSIST_MNT, ".askus-update")
         os.makedirs(dest, exist_ok=True)
         for f in os.listdir(dest):
-            if f not in {p["name"] for p in pieces} | {STATE_NAME}:
+            if f not in {p["name"] for p in pieces} | {STATE_NAME, VERIFIED_NAME}:
                 os.remove(os.path.join(dest, f))
-        download(pieces, dest, total, workers=3, label="Downloading the update in the background")
         paths = [os.path.join(dest, p["name"]) for p in pieces]
-        got = sha256_of_pieces(paths, total, "Checking the download…", 60, 6)
-        if got != expected:
-            for p in paths + [os.path.join(dest, STATE_NAME)]:
+        ok, _ = fetch_image(cur, assets, pieces, dest, total, expected, 4,
+                            "Downloading the update in the background", "Checking the download…")
+        if not ok:
+            for p in paths + [os.path.join(dest, STATE_NAME), os.path.join(dest, VERIFIED_NAME)]:
                 if os.path.exists(p):
                     os.remove(p)
             write_status(state="error", error="background download was damaged and deleted; it will retry")
