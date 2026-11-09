@@ -1,0 +1,4 @@
+#!/bin/bash
+# Show SHA-256 checksums, e.g. to compare a download with the one its publisher lists.
+while IFS= read -r f; do [ -f "$f" ] && sha256sum "$f"; done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" |
+  sed 's|  .*/|  |' | zenity --text-info --title="SHA-256 checksums" --width=760 --height=300 --font=monospace

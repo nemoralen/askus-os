@@ -1,0 +1,11 @@
+[Unit]
+Description=ASKus OS: look for a new release to download in the background
+
+[Timer]
+# 10 minutes after startup (time to unlock Persistent Storage and for Tor to connect), then every 6 hours
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=ASKus OS: check for program security updates over Tor every 6 hours
+
+[Timer]
+# The first check runs at startup (askus-autoupdate.service); then every 6 hours while running.
+OnUnitActiveSec=6h
+RandomizedDelaySec=20min
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

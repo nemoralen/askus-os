@@ -1,0 +1,10 @@
+#!/bin/bash
+# Remove hidden metadata (author, GPS location, camera, edit history...) with mat2.
+# Creates "name.cleaned.ext" next to each file.
+n=0; bad=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if mat2 "$f" >/dev/null 2>&1; then n=$((n+1)); else bad=$((bad+1)); fi
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+notify-send --app-name="ASKus" "Metadata removed from $n file(s)" \
+  "Clean copies are saved as *.cleaned.* $( [ $bad -gt 0 ] && echo "- $bad file type(s) not supported")"

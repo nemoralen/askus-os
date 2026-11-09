@@ -4,7 +4,7 @@ After=network-online.target tor@default.service nftables.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/local/sbin/askus-autoupdate
 Nice=15
 IOSchedulingClass=idle

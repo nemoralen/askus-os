@@ -36,6 +36,11 @@ mkdir -p $B/askus/png $B/backgrounds/askus
 rsync -a branding/png/ $B/askus/png/
 cp branding/logo.svg $B/askus/logo.svg
 cp branding/png/askus-wallpaper.png $B/backgrounds/askus/askus-wallpaper.png
+# colour variants of the ASKus wallpaper (Settings -> Appearance -> Background)
+convert branding/png/askus-wallpaper.png -modulate 100,100,60  $B/backgrounds/askus/askus-emerald.png
+convert branding/png/askus-wallpaper.png -modulate 100,100,140 $B/backgrounds/askus/askus-magenta.png
+convert branding/png/askus-wallpaper.png -modulate 100,100,170 $B/backgrounds/askus/askus-ember.png
+convert branding/png/askus-wallpaper.png -modulate 75,60,100   $B/backgrounds/askus/askus-midnight.png
 mkdir -p config/includes.chroot/usr/share/askus
 
 echo "==> Checking that every package exists in Debian (missing ones are skipped, not fatal)"

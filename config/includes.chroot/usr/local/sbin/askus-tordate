@@ -1,0 +1,40 @@
+#!/bin/bash
+# ASKus OS: fix a wrong clock so Tor can connect (like Tails' "tordate").
+# PCs that also run Windows keep the hardware clock in LOCAL time, so a Linux system that
+# reads it as UTC is off by several hours, and Tor refuses a consensus that isn't valid "now".
+# Tor still downloads the consensus. We read its signed validity window and, if our clock is
+# outside it, set the clock to valid-after + 30 minutes (accurate to within ~30 minutes,
+# which is all Tor needs) and restart Tor. Nothing is fetched outside Tor, and the
+# hardware clock is never written, so Windows' clock is left alone.
+D=${ASKUS_TOR_DIR:-/var/lib/tor}
+LOG=/run/askus/tordate.log
+mkdir -p /run/askus
+log() { echo "$(date -u '+%F %T') $*" >> "$LOG"; }
+ts() { date -u -d "$1 UTC" +%s 2>/dev/null; }
+
+for i in $(seq 1 120); do                       # up to ~10 minutes after boot
+  for f in "$D/cached-microdesc-consensus" "$D/unverified-microdesc-consensus" \
+           "$D/cached-consensus" "$D/unverified-consensus"; do
+    [ -s "$f" ] || continue
+    VA=$(sed -n 's/^valid-after //p' "$f" | head -n1)
+    VU=$(sed -n 's/^valid-until //p' "$f" | head -n1)
+    [ -n "$VA" ] && [ -n "$VU" ] || continue
+    A=$(ts "$VA"); U=$(ts "$VU"); NOW=$(date -u +%s)
+    [ -n "$A" ] && [ -n "$U" ] || continue
+    if [ "$NOW" -lt "$A" ] || [ "$NOW" -gt "$U" ]; then
+      NEW=$(( A + 1800 ))   # a new consensus is published every hour: real time is ~0-60 min after valid-after
+      log "clock $(date -u -d @"$NOW" '+%F %T') outside consensus $VA .. $VU - setting $(date -u -d @"$NEW" '+%F %T')"
+      date -u -s "@$NEW" >/dev/null
+      systemctl restart tor@default.service 2>/dev/null || systemctl restart tor.service 2>/dev/null
+      echo "fixed" > /run/askus/tordate.state
+      exit 0
+    fi
+    # clock is inside the window; once Tor is working we're done
+    if curl -s -m 10 --proxy socks5h://127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null | grep -q '"IsTor":true'; then
+      echo "ok" > /run/askus/tordate.state
+      exit 0
+    fi
+  done
+  sleep 5
+done
+exit 0

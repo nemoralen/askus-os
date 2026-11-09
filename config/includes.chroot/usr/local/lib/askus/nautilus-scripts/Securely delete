@@ -1,0 +1,12 @@
+#!/bin/bash
+# Overwrite, then delete the selected files. On USB sticks and SSDs this is best-effort:
+# the drive may keep old copies internally. Encrypted Persistent Storage protects those.
+COUNT=$(printf '%s\n' "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" | grep -c .)
+zenity --question --icon=dialog-warning --title="Securely delete" \
+  --text="Permanently overwrite and delete $COUNT item(s)?\n\nThis can't be undone." || exit 0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -d "$f" ]; then find "$f" -type f -exec shred -u -n 1 -z {} \; ; rm -rf "$f"
+  elif [ -f "$f" ]; then shred -u -n 1 -z "$f"; fi
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+notify-send --app-name="ASKus" "Securely deleted $COUNT item(s)"

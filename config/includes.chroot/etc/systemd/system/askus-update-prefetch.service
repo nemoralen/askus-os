@@ -1,0 +1,10 @@
+[Unit]
+Description=ASKus OS: download a newer signed release in the background (through Tor)
+After=tor@default.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/askus-update prefetch
+Nice=19
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle

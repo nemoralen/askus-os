@@ -7,4 +7,28 @@
     <filename-dark>/usr/share/backgrounds/askus/askus-wallpaper.png</filename-dark>
     <options>zoom</options>
   </wallpaper>
+  <wallpaper deleted="false">
+    <name>ASKus Emerald</name>
+    <filename>/usr/share/backgrounds/askus/askus-emerald.png</filename>
+    <filename-dark>/usr/share/backgrounds/askus/askus-emerald.png</filename-dark>
+    <options>zoom</options>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>ASKus Magenta</name>
+    <filename>/usr/share/backgrounds/askus/askus-magenta.png</filename>
+    <filename-dark>/usr/share/backgrounds/askus/askus-magenta.png</filename-dark>
+    <options>zoom</options>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>ASKus Ember</name>
+    <filename>/usr/share/backgrounds/askus/askus-ember.png</filename>
+    <filename-dark>/usr/share/backgrounds/askus/askus-ember.png</filename-dark>
+    <options>zoom</options>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>ASKus Midnight</name>
+    <filename>/usr/share/backgrounds/askus/askus-midnight.png</filename>
+    <filename-dark>/usr/share/backgrounds/askus/askus-midnight.png</filename-dark>
+    <options>zoom</options>
+  </wallpaper>
 </wallpapers>

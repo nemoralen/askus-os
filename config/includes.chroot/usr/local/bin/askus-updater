@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""ASKus Update: check for and install the newest weekly ASKus OS build."""
+"""ASKus Update: check for and install the newest signed ASKus OS build."""
 import json
 import subprocess
 import sys
@@ -118,7 +118,15 @@ class Window(Adw.ApplicationWindow):
         if r.get("newer"):
             self.latest = r["latest"]
             self.title.set_label("An update is available")
-            self.step.set_label("The download can take 10–40 minutes over Tor. Keep the USB stick plugged in.")
+            try:
+                pre = json.load(open("/run/askus/prefetch.json"))
+            except Exception:  # noqa: BLE001
+                pre = {}
+            if pre.get("state") == "ready" and pre.get("latest") == self.latest:
+                self.step.set_label("Already downloaded and verified in the background - installing takes a few minutes.")
+            else:
+                self.step.set_label("Downloads over several Tor circuits at once (usually 5–15 minutes). "
+                                    "Keep the USB stick plugged in.")
             self.mode = "update"
             self.button.set_label("Update now")
         else:

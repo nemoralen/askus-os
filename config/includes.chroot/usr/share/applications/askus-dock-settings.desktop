@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Dock & Desktop
+Comment=Move the dock to the bottom, left, right or top; size and auto-hide
+Exec=/usr/local/bin/askus-dock-settings
+Icon=preferences-desktop
+Categories=Settings;DesktopSettings;
+Keywords=dock;position;taskbar;panel;left;right;top;bottom;desktop;

@@ -65,11 +65,24 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 
 ---
 
-## Weekly updates
+## Desktop
 
-- **Every Sunday** GitHub builds a fresh ASKus OS with the latest Debian security fixes and Tor Browser, and publishes it under **Releases**. The newest 4 are kept. You can also start a build any time: **Actions → Build ASKus OS ISO → Run workflow**.
+- **Screen lock:** the Welcome screen asks you to choose a lock password for the session. Until you do, the screen never locks. (If you enable the administration password, the lock screen uses that.)
+- **Dock:** open **Dock & Desktop** to put the dock at the bottom, left, right or top, change its size, or turn auto-hide off.
+- **Right-click on the desktop:** new folder or document, paste, arrange icons, open in Terminal, change background, display settings.
+- **Right-click on files** (**Scripts** menu in Files): *Encrypt with password*, *Decrypt*, *Remove metadata*, *Securely delete*, *Show SHA-256 checksum*. Also *Open in Terminal*, *Compress* and *Extract*.
+- **Backgrounds:** five ASKus colour variants plus the GNOME collection in **Settings → Appearance**.
+- **Bluetooth:** supported, but **off at startup**, because nearby devices can see a Bluetooth radio. Turn it on from the top-right menu when you need it.
+- **Clock:** if the computer's clock is wrong (common on PCs that also run Windows), ASKus corrects it from the Tor network so Tor can connect. Only the system clock is changed, never the hardware clock Windows uses.
+
+## Daily updates (signed)
+
+- **Every day** GitHub builds a fresh ASKus OS with the latest Debian security fixes and Tor Browser, and publishes it under **Releases**. The newest 7 are kept.
+- **Every release is signed** with the ASKus release key (`SHA256SUMS.sig`). The matching public key is built into ASKus OS (`/etc/askus/release-signers`), and the updater **refuses any update that isn't signed with it** - a tampered or fake release is never installed. The build refuses to publish if the key is missing. You can also start a build any time: **Actions → Build ASKus OS ISO → Run workflow**.
 - **Inside ASKus OS:** about a minute after Tor connects, ASKus OS checks for a newer build. If there is one, a notification offers **Update now**. You can also open **ASKus Update** from the app grid whenever you like.
-- **What the update does:** it downloads the new image through Tor (into your Persistent Storage if it's unlocked, otherwise into RAM) and checks its SHA-256. It then moves the running system into memory, writes the new version to the USB stick, reads it back to verify it, and keeps your Persistent Storage. Restart and you're on the new version.
+- **Fast downloads through Tor:** the image is fetched in 32 MB pieces over **several Tor circuits at once** (each piece on its own circuit), which is several times faster than one connection, and an interrupted download resumes where it stopped.
+- **Background download:** when Persistent Storage is unlocked, ASKus downloads a new (signed) release quietly in the background, about 10 minutes after startup and then every 6 hours. When it's ready, a notification offers **Install now**, and installing only takes a few minutes.
+- **What the update does:** it downloads the new image through Tor (into your Persistent Storage if it's unlocked, otherwise into RAM) checks the signature and the SHA-256. It then moves the running system into memory, writes the new version to the USB stick, reads it back to verify it, and keeps your Persistent Storage. Restart and you're on the new version.
 - **Needs:** ASKus OS started from its USB stick and enough free memory (about 3 GB with Persistent Storage unlocked, about 5 GB without). The first 4 GB of the stick are reserved for the system so updates never touch your saved files. That's why Persistent Storage needs a stick of 6 GB or more.
 
 ## Everyday Browser (Brave)
@@ -98,8 +111,9 @@ A chat app in the dock with two modes. The window colour always shows which one 
 
 ## Automatic program updates
 
-About 1–5 minutes after Tor connects, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. Tor Browser updates itself the same way.
-- Core parts (kernel, desktop, boot) aren't changed mid-session. They come with the weekly **ASKus Update**, which also makes all updates permanent.
+About 1–5 minutes after Tor connects, and then **every 6 hours** while it's running, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. 
+- Core parts (kernel, desktop, boot) aren't changed mid-session. They come with the daily **ASKus Update**, which also makes all updates permanent.
+- **Recommended:** let program updates run automatically, and install the **ASKus Update** at least once a week (it's offered daily; the 2.7 GB download over Tor takes a while).
 - To turn this off, set `AUTO_UPDATE=no` in `/etc/askus/autoupdate.conf`.
 
 ## Leak test

@@ -34,7 +34,11 @@ primary-color='#070A1F'
 
 [org/gnome/desktop/screensaver]
 picture-uri='file:///usr/share/backgrounds/askus/askus-wallpaper.png'
-lock-enabled=true
+# No lock screen until you choose a lock password on the Welcome screen
+lock-enabled=false
+
+[org/gnome/desktop/lockdown]
+disable-lock-screen=true
 
 [org/gnome/desktop/peripherals/touchpad]
 tap-to-click=true
@@ -42,7 +46,7 @@ natural-scroll=true
 two-finger-scrolling-enabled=true
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com']
 favorite-apps=['askus-tor-browser.desktop', 'askus-everyday-browser.desktop', 'askus-assistant.desktop', 'org.gnome.Nautilus.desktop', 'electrum.desktop', 'org.keepassxc.KeePassXC.desktop', 'org.kde.kleopatra.desktop', 'org.mozilla.Thunderbird.desktop', 'thunderbird.desktop', 'askus-tor-status.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop']
 welcome-dialog-last-shown-version='999'
 disable-user-extensions=false
@@ -71,6 +75,15 @@ scroll-action='cycle-windows'
 animation-time=0.15
 show-delay=0.05
 hide-delay=0.15
+
+[org/gnome/shell/extensions/ding]
+show-home=false
+show-trash=false
+show-volumes=true
+show-network-volumes=false
+icon-size='standard'
+start-corner='top-right'
+add-volumes-opposite=true
 
 [org/gnome/shell/extensions/blur-my-shell]
 brightness=0.75

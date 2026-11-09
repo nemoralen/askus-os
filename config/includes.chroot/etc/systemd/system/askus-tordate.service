@@ -1,0 +1,11 @@
+[Unit]
+Description=ASKus OS: correct the clock from the Tor consensus if it is wrong
+After=tor@default.service tor.service
+Wants=tor.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/askus-tordate
+
+[Install]
+WantedBy=multi-user.target

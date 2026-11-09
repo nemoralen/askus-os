@@ -4,10 +4,12 @@
 Shown once at the start of every session (like the Tails Greeter):
   * unlock or create the encrypted Persistent Storage on the USB stick
   * see the Tor connection come up, add bridges, fix the clock
+  * choose a screen lock password (the screen never locks until you do)
   * optionally set an administration password for this session
 Privileged work is done by small root helpers in /usr/local/sbin via pkexec;
 they refuse to change anything once this screen has been closed.
 """
+import os
 import subprocess
 import sys
 import json
@@ -22,6 +24,7 @@ PERSIST = "/usr/local/sbin/askus-persistence"
 ADMIN = "/usr/local/sbin/askus-admin"
 BRIDGES = "/usr/local/sbin/askus-bridges"
 LOGO = "/usr/share/icons/hicolor/256x256/apps/askus-logo.png"
+LOCK_FLAG = "/run/askus/lock-password-set"
 TOR_CHECK = ["curl", "-s", "-m", "15", "--socks5-hostname", "127.0.0.1:9050",
              "https://check.torproject.org/api/ip"]
 
@@ -157,6 +160,31 @@ class Welcome(Adw.ApplicationWindow):
         tor_group.add(self.clock_row)
         page.append(tor_group)
 
+        # --- Screen lock ---
+        lock_group = Adw.PreferencesGroup(
+            title="Screen lock",
+            description="Locks the screen when you step away. Choose a password for this session - "
+                        "the screen won't lock until you do.")
+        self.lock_row = Adw.ExpanderRow(title="Screen lock password", subtitle="Not set - the screen won't lock")
+        self.lock_row.add_prefix(Gtk.Image.new_from_icon_name("system-lock-screen-symbolic"))
+        self.lock_pw1 = Adw.PasswordEntryRow(title="Password")
+        self.lock_pw2 = Adw.PasswordEntryRow(title="Confirm password")
+        self.lock_pw2.connect("entry-activated", self.on_lock)
+        lock_box = Gtk.Box(halign=Gtk.Align.END, margin_top=8, margin_bottom=8, margin_end=12)
+        self.lock_btn = Gtk.Button(label="Set password")
+        self.lock_btn.add_css_class("suggested-action")
+        self.lock_btn.connect("clicked", self.on_lock)
+        lock_box.append(self.lock_btn)
+        self.lock_row.add_row(self.lock_pw1)
+        self.lock_row.add_row(self.lock_pw2)
+        self.lock_row.add_row(lock_box)
+        lock_group.add(self.lock_row)
+        page.append(lock_group)
+        if os.path.exists(LOCK_FLAG):
+            self.lock_is_set()
+        else:
+            self.lock_row.set_expanded(True)
+
         # --- Admin ---
         self.admin_group = Adw.PreferencesGroup(
             title="Administration",
@@ -181,7 +209,7 @@ class Welcome(Adw.ApplicationWindow):
         self.start_btn.add_css_class("suggested-action")
         self.start_btn.add_css_class("pill")
         self.start_btn.add_css_class("start-btn")
-        self.start_btn.connect("clicked", lambda *_: self.finish_and_close())
+        self.start_btn.connect("clicked", self.on_start)
         page.append(self.start_btn)
 
         clamp = Adw.Clamp(maximum_size=600)
@@ -409,6 +437,8 @@ class Welcome(Adw.ApplicationWindow):
 
         def done(ok, out, err):
             if ok:
+                self.enable_screen_lock()
+                self.lock_is_set("Uses your administration password")
                 self.admin_row.set_subtitle("Enabled for this session (sudo and screen lock use it)")
                 self.admin_row.set_expanded(False)
                 self.admin_row.set_sensitive(False)
@@ -416,6 +446,61 @@ class Welcome(Adw.ApplicationWindow):
             else:
                 self.toast(clean_err(err))
         run_async(["pkexec", ADMIN, "set-password"], a + "\n", done)
+
+    # ---------- screen lock ----------
+    def enable_screen_lock(self):
+        try:
+            Gio.Settings.new("org.gnome.desktop.lockdown").set_boolean("disable-lock-screen", False)
+            Gio.Settings.new("org.gnome.desktop.screensaver").set_boolean("lock-enabled", True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def lock_is_set(self, subtitle="Set for this session ✓"):
+        self.lock_row.set_subtitle(subtitle)
+        self.lock_row.set_expanded(False)
+        self.lock_row.set_enable_expansion(False)
+
+    def on_lock(self, *_):
+        a, b = self.lock_pw1.get_text(), self.lock_pw2.get_text()
+        if len(a) < 4:
+            self.toast("Use at least 4 characters")
+            return
+        if a != b:
+            self.toast("The passwords do not match")
+            return
+
+        def done(ok, out, err):
+            if ok:
+                self.enable_screen_lock()
+                self.lock_is_set()
+                self.lock_pw1.set_text("")
+                self.lock_pw2.set_text("")
+                self.toast("Screen lock password set")
+            else:
+                self.toast(clean_err(err))
+        run_async(["pkexec", ADMIN, "set-lock-password"], a + "\n", done)
+
+    def on_start(self, *_):
+        if os.path.exists(LOCK_FLAG):
+            self.finish_and_close()
+            return
+        dlg = Adw.AlertDialog(
+            heading="Set a screen lock password?",
+            body="Without one, the screen never locks - anyone at your computer can use it while "
+                 "you're away. The password is only for this session.")
+        dlg.add_response("skip", "Start without")
+        dlg.add_response("set", "Set password")
+        dlg.set_response_appearance("set", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("set")
+
+        def resp(d, r):
+            if r == "skip":
+                self.finish_and_close()
+            else:
+                self.lock_row.set_expanded(True)
+                self.lock_pw1.grab_focus()
+        dlg.connect("response", resp)
+        dlg.present(self)
 
     # ---------- closing ----------
     def finish_and_close(self):

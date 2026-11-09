@@ -42,3 +42,15 @@ fonts-noto-core
 fonts-noto-color-emoji
 fonts-dejavu-core
 adwaita-icon-theme
+# Bluetooth (off at startup; turn on from the top-right menu)
+bluez
+bluez-obexd
+bluez-firmware
+gnome-bluetooth-sendto
+libspa-0.2-bluetooth
+# more wallpapers
+gnome-backgrounds
+# desktop icons + right-click menu on the desktop
+gnome-shell-extension-desktop-icons-ng
+# "Open in Terminal" in Files
+nautilus-extension-gnome-terminal

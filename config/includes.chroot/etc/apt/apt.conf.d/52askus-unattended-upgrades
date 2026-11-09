@@ -1,6 +1,6 @@
 // ASKus OS: which program updates are installed automatically (over Tor) each session.
 // Security fixes, stable updates and Brave are installed. Core desktop and boot
-// components are left alone mid-session; they arrive with the weekly system update.
+// components are left alone mid-session; they arrive with the daily system update.
 Unattended-Upgrade::Origins-Pattern {
         "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
         "origin=Debian,codename=${distro_codename}-updates";

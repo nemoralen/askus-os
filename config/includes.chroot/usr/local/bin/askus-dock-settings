@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+"""ASKus OS: Dock & Desktop settings - where the dock sits, how big it is, auto-hide."""
+import os
+import sys
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, Gtk  # noqa: E402
+
+DOCK_SCHEMA = "org.gnome.shell.extensions.dash-to-dock"
+DOCK_DIRS = ["/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/schemas",
+             os.path.expanduser("~/.local/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/schemas")]
+DESK_SCHEMA = "org.gnome.shell.extensions.ding"
+DESK_DIRS = ["/usr/share/gnome-shell/extensions/ding@rastersoft.com/schemas"]
+
+POSITIONS = [("BOTTOM", "Bottom"), ("LEFT", "Left"), ("RIGHT", "Right"), ("TOP", "Top")]
+
+
+def settings_for(schema_id, dirs):
+    src = Gio.SettingsSchemaSource.get_default()
+    if src and src.lookup(schema_id, True):
+        return Gio.Settings.new(schema_id)
+    for d in dirs:
+        if os.path.isdir(d):
+            try:
+                s = Gio.SettingsSchemaSource.new_from_directory(d, src, False)
+                schema = s.lookup(schema_id, False)
+                if schema:
+                    return Gio.Settings.new_full(schema, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+    return None
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Dock & Desktop", default_width=460, default_height=560)
+        self.dock = settings_for(DOCK_SCHEMA, DOCK_DIRS)
+        self.desk = settings_for(DESK_SCHEMA, DESK_DIRS)
+
+        page = Adw.PreferencesPage()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(page)
+        self.set_content(view)
+
+        g = Adw.PreferencesGroup(title="Dock",
+                                 description="The dock can sit on any edge of the screen.")
+        page.add(g)
+        if not self.dock:
+            g.add(Adw.ActionRow(title="The dock extension isn't available"))
+            return
+
+        pos = Adw.ComboRow(title="Position on screen", model=Gtk.StringList.new([p[1] for p in POSITIONS]))
+        cur = self.dock.get_string("dock-position")
+        pos.set_selected(next((i for i, p in enumerate(POSITIONS) if p[0] == cur), 0))
+        pos.connect("notify::selected", lambda r, _p: self.dock.set_string("dock-position", POSITIONS[r.get_selected()][0]))
+        g.add(pos)
+
+        size = Adw.SpinRow.new_with_range(24, 96, 4)
+        size.set_title("Icon size")
+        size.set_value(self.dock.get_int("dash-max-icon-size"))
+        size.connect("notify::value", lambda r, _p: self.dock.set_int("dash-max-icon-size", int(r.get_value())))
+        g.add(size)
+
+        def switch(title, subtitle, key, invert=False):
+            row = Adw.SwitchRow(title=title, subtitle=subtitle)
+            row.set_active(self.dock.get_boolean(key) != invert)
+            row.connect("notify::active", lambda r, _p: self.dock.set_boolean(key, r.get_active() != invert))
+            g.add(row)
+
+        switch("Hide automatically", "Slides away when a window touches it", "autohide")
+        switch("Always visible", "Windows make room for the dock", "dock-fixed")
+        switch("Stretch to full edge", "A full-length bar instead of a floating dock", "extend-height")
+        switch("Show on all screens", "", "multi-monitor")
+        switch("Show Trash", "", "show-trash")
+        switch("Show USB drives", "", "show-mounts")
+        switch("Apps button at the start", "Put the app grid button first", "show-apps-at-top")
+
+        if self.desk:
+            d = Adw.PreferencesGroup(title="Desktop", description="Icons on the desktop and the right-click menu.")
+            page.add(d)
+            for title, key in [("Show Home folder", "show-home"), ("Show Trash", "show-trash"),
+                               ("Show USB drives", "show-volumes")]:
+                row = Adw.SwitchRow(title=title)
+                row.set_active(self.desk.get_boolean(key))
+                row.connect("notify::active", lambda r, _p, k=key: self.desk.set_boolean(k, r.get_active()))
+                d.add(row)
+
+        r = Adw.PreferencesGroup()
+        page.add(r)
+        reset = Gtk.Button(label="Reset dock to ASKus defaults", halign=Gtk.Align.CENTER)
+        reset.add_css_class("pill")
+        reset.connect("clicked", self.on_reset)
+        r.add(reset)
+
+    def on_reset(self, _b):
+        for k in ["dock-position", "dash-max-icon-size", "autohide", "dock-fixed", "extend-height",
+                  "multi-monitor", "show-trash", "show-mounts", "show-apps-at-top"]:
+            self.dock.reset(k)
+        self.close()
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.DockSettings")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

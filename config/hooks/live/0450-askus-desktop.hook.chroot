@@ -1,0 +1,60 @@
+#!/bin/bash
+# Desktop polish: app icons, account picture, right-click actions, templates, Bluetooth.
+set -u
+
+# ---- App icons: use each app's own icon when the WhiteSur theme maps it to a wrong/generic one.
+# Copies the .desktop file to /usr/local/share/applications (which wins over /usr/share)
+# with Icon= pointing straight at the app's own icon file.
+mkdir -p /usr/local/share/applications
+for desk in org.keepassxc.KeePassXC.desktop org.kde.kleopatra.desktop kleopatra.desktop electrum.desktop; do
+  src=/usr/share/applications/$desk
+  [ -f "$src" ] || continue
+  name=$(sed -n 's/^Icon=//p' "$src" | head -n1)
+  [ -n "$name" ] || continue
+  [ "${name#/}" != "$name" ] && continue           # already an absolute path
+  file=""
+  for d in scalable/apps 512x512/apps 256x256/apps 128x128/apps 64x64/apps 48x48/apps; do
+    for ext in svg png; do
+      [ -f "/usr/share/icons/hicolor/$d/$name.$ext" ] && { file="/usr/share/icons/hicolor/$d/$name.$ext"; break 2; }
+    done
+  done
+  [ -z "$file" ] && [ -f "/usr/share/pixmaps/$name.png" ] && file="/usr/share/pixmaps/$name.png"
+  [ -z "$file" ] && [ -f "/usr/share/pixmaps/$name.svg" ] && file="/usr/share/pixmaps/$name.svg"
+  if [ -n "$file" ]; then
+    sed "s|^Icon=.*|Icon=$file|" "$src" > "/usr/local/share/applications/$desk"
+    echo "[askus] icon for $desk -> $file"
+  else
+    echo "[askus] NOTE: no own icon found for $desk ($name)"
+  fi
+done
+update-desktop-database -q /usr/local/share/applications 2>/dev/null || true
+
+# ---- Account picture for the lock screen / user menu
+mkdir -p /var/lib/AccountsService/icons /var/lib/AccountsService/users
+if [ -f /usr/share/askus/png/askus-logo-256.png ]; then
+  cp /usr/share/askus/png/askus-logo-256.png /var/lib/AccountsService/icons/askus
+  printf '[User]\nIcon=/var/lib/AccountsService/icons/askus\nSystemAccount=false\n' > /var/lib/AccountsService/users/askus
+  chmod 644 /var/lib/AccountsService/icons/askus /var/lib/AccountsService/users/askus
+fi
+
+# ---- Right-click actions in Files (Scripts menu) and "New Document" templates
+S=/etc/skel/.local/share/nautilus/scripts
+mkdir -p "$S" /etc/skel/Templates
+if [ -d /usr/local/lib/askus/nautilus-scripts ]; then
+  cp -f /usr/local/lib/askus/nautilus-scripts/* "$S"/
+  chmod 755 "$S"/* /usr/local/lib/askus/nautilus-scripts/*
+fi
+printf '\n' > "/etc/skel/Templates/Text Document.txt"
+printf '# Title\n\n' > "/etc/skel/Templates/Markdown Note.md"
+
+# ---- Bluetooth: available, but OFF at startup (it's radio that nearby devices can see).
+# Turn it on from the top-right menu when you need it.
+if [ -f /etc/bluetooth/main.conf ]; then
+  if grep -qE '^#?AutoEnable' /etc/bluetooth/main.conf; then
+    sed -i -E 's/^#?AutoEnable=.*/AutoEnable=false/' /etc/bluetooth/main.conf
+  else
+    sed -i '/^\[Policy\]/a AutoEnable=false' /etc/bluetooth/main.conf || true
+  fi
+  systemctl enable bluetooth.service 2>/dev/null || true
+fi
+exit 0

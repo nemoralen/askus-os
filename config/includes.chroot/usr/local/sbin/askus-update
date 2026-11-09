@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 """ASKus OS updater.
 
-  askus-update check [--json]   is a newer weekly build available? (any user)
+  askus-update check [--json]   is a newer signed build available? (any user)
   askus-update status           progress of a running update (any user)
   askus-update start            start updating in the background (root, via pkexec)
   askus-update apply            the update itself (run by `start` as a systemd unit)
+  askus-update prefetch         download a newer signed release in the background (timer)
 
 How an update works:
   1. The newest GitHub Release of UPDATE_REPO (see /etc/askus-release) is fetched
@@ -148,6 +149,15 @@ def cmd_check(as_json):
         return 2
     name, pieces, _ = image_assets(assets)
     newer = build_id_of(tag) > build_id_of(cur["TAG"]) and bool(pieces)
+    if newer:
+        try:
+            verified_sums(assets)
+        except Exception as e:  # noqa: BLE001
+            res = {"ok": False, "current": cur["TAG"], "latest": tag,
+                   "error": str(e) if isinstance(e, Failure) else
+                   f"could not check the update's signature ({e.__class__.__name__})"}
+            print(json.dumps(res) if as_json else res["error"])
+            return 3
     res = {"ok": True, "current": cur["TAG"], "latest": tag, "published": published,
            "newer": newer, "size": sum(p["size"] for p in pieces)}
     if as_json:
@@ -173,6 +183,7 @@ def cmd_start():
         print("already running")
         return 0
     write_status(state="running", step="Starting…", progress=0)
+    sh("systemctl", "stop", "askus-update-prefetch.service")   # the update continues its download
     sh("systemctl", "reset-failed", "askus-update.service")
     r = sh("systemd-run", "--unit=askus-update", "--collect", "--quiet",
            "--property=Type=exec", "/usr/local/sbin/askus-update", "apply")
@@ -187,35 +198,156 @@ class Failure(Exception):
     pass
 
 
-def download(pieces, dest, total):
-    done = {"bytes": 0}
+SIGNERS = "/etc/askus/release-signers"   # public key(s) allowed to sign releases
+SIG_NAMESPACE = "askus-release"
+
+
+def verified_sums(assets):
+    """Download SHA256SUMS and check its signature against the ASKus release key.
+    Returns the SHA256SUMS text, or raises Failure. An update that is not signed with
+    the key built into this system is never installed."""
+    sums = next((a for a in assets if a["name"] == "SHA256SUMS"), None)
+    sig = next((a for a in assets if a["name"] == "SHA256SUMS.sig"), None)
+    if not sums:
+        raise Failure("the newest release has no SHA256SUMS")
+    text = curl([sums["url"]])
+    if not os.path.isfile(SIGNERS):          # developer build without a release key
+        return text
+    if not sig:
+        raise Failure("the newest release is NOT signed with the ASKus release key - it will not be installed")
+    sig_path = "/run/askus/SHA256SUMS.sig"
+    os.makedirs("/run/askus", exist_ok=True)
+    with open(sig_path, "w") as f:
+        f.write(curl([sig["url"]]))
+    r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", SIGNERS, "-I", SIG_NAMESPACE,
+                        "-n", SIG_NAMESPACE, "-s", sig_path],
+                       input=text, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Failure("the newest release has an INVALID signature - it will not be installed. "
+                      "Someone may have tampered with it.")
+    return text
+
+
+TOR_ISOLATED = "127.0.0.1:9150"      # SocksPort with IsolateSOCKSAuth: each username = its own circuit
+CHUNK_DL = 32 * 1024 * 1024           # download unit (a slow circuit only delays its own chunk)
+STATE_NAME = ".chunks.json"
+
+
+def download(pieces, dest, total, workers=6, label="Downloading through Tor"):
+    """Download the image pieces over several Tor circuits at once.
+
+    Each piece is split into 32 MB chunks; `workers` threads take chunks from a queue and
+    fetch them with HTTP range requests, each over its OWN Tor circuit (separate SOCKS
+    username on the isolating SocksPort). Everything still goes through Tor; the server
+    only sees several Tor exits downloading parts of the same public file. Finished chunks
+    are recorded, so an interrupted download resumes where it stopped.
+    """
+    import queue
+    import random
+    state_path = os.path.join(dest, STATE_NAME)
+    try:
+        state = json.load(open(state_path))
+    except (OSError, ValueError):
+        state = {}
+    jobs = queue.Queue()
+    have = {"bytes": 0}
+    lock = threading.Lock()
+    for p in pieces:
+        out = os.path.join(dest, p["name"])
+        key = f'{p["name"]}:{p["size"]}'
+        done_set = set(state.get(key, []))
+        if not os.path.exists(out) or os.path.getsize(out) != p["size"]:
+            with open(out, "ab") as f:            # preallocate (sparse) so chunks can land anywhere
+                f.truncate(p["size"])
+        n = (p["size"] + CHUNK_DL - 1) // CHUNK_DL
+        for i in range(n):
+            a = i * CHUNK_DL
+            b = min(p["size"], a + CHUNK_DL) - 1
+            if i in done_set:
+                have["bytes"] += b - a + 1
+            else:
+                jobs.put((p, key, out, i, a, b))
+        state[key] = sorted(done_set)
+    errors = []
+
+    def save_state():
+        tmp = state_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, state_path)
+
+    def fetch(p, out, a, b, ident):
+        cmd = ["curl", "-sfL", "--proxy", f"socks5h://{ident}:x@{TOR_ISOLATED}",
+               "--connect-timeout", "60", "--speed-limit", "20000", "--speed-time", "60",
+               "-r", f"{a}-{b}", "-H", "User-Agent: askus-update", p["url"]]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        pos = a
+        fd = os.open(out, os.O_WRONLY)
+        try:
+            while True:
+                buf = proc.stdout.read(1024 * 1024)
+                if not buf:
+                    break
+                if pos + len(buf) > b + 1:
+                    buf = buf[: b + 1 - pos]
+                os.pwrite(fd, buf, pos)
+                pos += len(buf)
+                with lock:
+                    have["bytes"] += len(buf)
+        finally:
+            os.close(fd)
+            proc.stdout.close()
+            rc = proc.wait()
+        got = pos - a
+        if rc != 0 or got != b - a + 1:
+            with lock:
+                have["bytes"] -= got
+            return False
+        return True
+
+    def worker(w):
+        while True:
+            try:
+                p, key, out, i, a, b = jobs.get_nowait()
+            except queue.Empty:
+                return
+            for attempt in range(8):
+                ident = f"askus-update-{w}-{attempt}-{random.getrandbits(48):x}"   # fresh circuit per try
+                if fetch(p, out, a, b, ident):
+                    with lock:
+                        state[key] = sorted(set(state[key]) | {i})
+                        save_state()
+                    break
+                time.sleep(3 + attempt * 2)
+            else:
+                errors.append(p["name"])
+                return
+
     stop = threading.Event()
 
     def watch():
+        last, t0 = have["bytes"], time.time()
         while not stop.wait(1):
-            have = sum(os.path.getsize(os.path.join(dest, p["name"]))
-                       for p in pieces if os.path.exists(os.path.join(dest, p["name"])))
-            done["bytes"] = have
-            write_status(state="running", step=f"Downloading through Tor ({have/1e9:.2f} of {total/1e9:.2f} GB)",
-                         progress=round(5 + 55 * have / max(total, 1), 1))
+            cur = have["bytes"]
+            rate = (cur - last) / max(time.time() - t0, 1e-3)
+            if time.time() - t0 > 5:
+                last, t0 = cur, time.time()
+            write_status(state="running",
+                         step=f"{label} ({cur/1e9:.2f} of {total/1e9:.2f} GB, {rate/1e6:.1f} MB/s)",
+                         progress=round(5 + 55 * cur / max(total, 1), 1))
     t = threading.Thread(target=watch, daemon=True)
     t.start()
+    threads = [threading.Thread(target=worker, args=(w,), daemon=True) for w in range(max(1, workers))]
     try:
-        for p in pieces:
-            out = os.path.join(dest, p["name"])
-            if os.path.exists(out) and os.path.getsize(out) == p["size"]:
-                continue
-            for attempt in range(6):
-                r = sh("curl", "-fL", "--proxy", TOR, "-C", "-", "--retry", "5", "--retry-delay", "10",
-                       "-H", "User-Agent: askus-update", "-o", out, p["url"])
-                if r.returncode == 0 and os.path.getsize(out) == p["size"]:
-                    break
-                time.sleep(15)
-            else:
-                raise Failure(f"download of {p['name']} failed — check your connection and try again")
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
     finally:
         stop.set()
         t.join()
+    if errors or not jobs.empty():
+        raise Failure("the download kept failing - check your connection and try again (it will resume)")
 
 
 def sha256_of_pieces(paths, total, step, base, span):
@@ -280,7 +412,7 @@ def cmd_apply():
         if not pieces or not sums:
             raise Failure("the newest release has no system image or no SHA256SUMS")
         expected = None
-        for line in curl([sums["url"]]).splitlines():
+        for line in verified_sums(assets).splitlines():
             f = line.split()
             if len(f) == 2 and f[1].lstrip("*") == iso_name:
                 expected = f[0].lower()
@@ -313,15 +445,16 @@ def cmd_apply():
                 sh("mount", "-t", "tmpfs", "-o", f"size={need},mode=0700", "tmpfs", dest, check=True)
         # remove leftovers of older downloads
         for f in os.listdir(dest):
-            if f not in {p["name"] for p in pieces}:
+            if f not in {p["name"] for p in pieces} | {STATE_NAME}:
                 os.remove(os.path.join(dest, f))
 
         download(pieces, dest, total)
         paths = [os.path.join(dest, p["name"]) for p in pieces]
         got = sha256_of_pieces(paths, total, "Checking the download (SHA-256)…", 60, 6)
         if got != expected:
-            for p in paths:
-                os.remove(p)
+            for p in paths + [os.path.join(dest, STATE_NAME)]:
+                if os.path.exists(p):
+                    os.remove(p)
             raise Failure("the download is damaged (checksum mismatch) and was deleted — try again")
 
         move_system_into_ram()
@@ -400,6 +533,90 @@ def cmd_apply():
         return 1
 
 
+PREFETCH_STATUS = "/run/askus/prefetch.json"
+
+
+def notify_user(title, body, action_label=None):
+    """Desktop notification for the logged-in user; optional button that opens ASKus Update."""
+    try:
+        import pwd
+        uid = pwd.getpwnam("askus").pw_uid
+    except KeyError:
+        return
+    bus = f"/run/user/{uid}/bus"
+    if not os.path.exists(bus):
+        return
+    ns = ["notify-send", "--app-name=ASKus Update", "--icon=askus-logo", title, body]
+    if action_label:
+        ns[1:1] = [f"--action=update={action_label}", "--action=later=Later"]
+        script = 'a=$("$@"); [ "$a" = update ] && exec /usr/local/bin/askus-updater'
+        cmd = ["runuser", "-u", "askus", "--", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+               f"XDG_RUNTIME_DIR=/run/user/{uid}", "sh", "-c", script, "sh"] + ns
+    else:
+        cmd = ["runuser", "-u", "askus", "--", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}"] + ns
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def cmd_prefetch():
+    """Download a newer, correctly signed release into Persistent Storage in the background,
+    so that "Update now" only has to write it to the stick. Runs from askus-update-prefetch.timer.
+    Only when Persistent Storage is unlocked (never fills RAM), through Tor, gently (3 circuits)."""
+    global STATUS
+    if os.geteuid() != 0:
+        sys.exit("must run as root")
+    STATUS = PREFETCH_STATUS
+    if not os.path.ismount(PERSIST_MNT):
+        write_status(state="idle", step="Persistent Storage is locked - no background download")
+        return 0
+    if sh("systemctl", "is-active", "--quiet", "askus-update.service").returncode == 0:
+        return 0
+    try:
+        cur = release_info()
+        tag, published, assets = latest_release(cur["UPDATE_REPO"])
+        if build_id_of(tag) <= build_id_of(cur["TAG"]):
+            write_status(state="idle", step="up to date")
+            return 0
+        iso_name, pieces, sums = image_assets(assets)
+        if not pieces:
+            return 0
+        expected = None
+        for line in verified_sums(assets).splitlines():       # refuses unsigned / tampered releases
+            f = line.split()
+            if len(f) == 2 and f[1].lstrip("*") == iso_name:
+                expected = f[0].lower()
+        if not expected:
+            return 0
+        total = sum(p["size"] for p in pieces)
+        if shutil.disk_usage(PERSIST_MNT).free < total + 500e6:
+            write_status(state="idle", step="not enough space in Persistent Storage for a background download")
+            return 0
+        dest = os.path.join(PERSIST_MNT, ".askus-update")
+        os.makedirs(dest, exist_ok=True)
+        for f in os.listdir(dest):
+            if f not in {p["name"] for p in pieces} | {STATE_NAME}:
+                os.remove(os.path.join(dest, f))
+        download(pieces, dest, total, workers=3, label="Downloading the update in the background")
+        paths = [os.path.join(dest, p["name"]) for p in pieces]
+        got = sha256_of_pieces(paths, total, "Checking the download…", 60, 6)
+        if got != expected:
+            for p in paths + [os.path.join(dest, STATE_NAME)]:
+                if os.path.exists(p):
+                    os.remove(p)
+            write_status(state="error", error="background download was damaged and deleted; it will retry")
+            return 1
+        write_status(state="ready", step=f"{tag} downloaded and verified", latest=tag)
+        notify_user("ASKus OS update ready",
+                    f"{tag} has been downloaded and verified in the background. Installing it now only "
+                    "takes a few minutes.", "Install now")
+        return 0
+    except Failure as e:
+        write_status(state="error", error=str(e))
+        return 1
+    except Exception as e:  # noqa: BLE001
+        write_status(state="error", error=f"{e.__class__.__name__}: {e}")
+        return 1
+
+
 def main():
     a = sys.argv[1:] or ["check"]
     if a[0] == "check":
@@ -410,7 +627,9 @@ def main():
         return cmd_start()
     if a[0] == "apply":
         return cmd_apply()
-    sys.exit("usage: askus-update check [--json] | status | start")
+    if a[0] == "prefetch":
+        return cmd_prefetch()
+    sys.exit("usage: askus-update check [--json] | status | start | prefetch")
 
 
 if __name__ == "__main__":

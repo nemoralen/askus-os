@@ -1,8 +1,8 @@
 #!/bin/bash
 # ASKus OS: install program updates for this session, downloaded through Tor.
-# Runs once per boot (askus-autoupdate.service), quietly, at low priority.
+# Runs at startup and then every 6 hours (askus-autoupdate.timer), quietly, at low priority.
 # Everything is fetched over Tor, so update servers never see your IP address.
-# Updates live in RAM for this session; the weekly ASKus OS update makes them permanent.
+# Updates live in RAM for this session; the daily ASKus OS update makes them permanent.
 STATUS=/run/askus/autoupdate.json
 CONF=/etc/askus/autoupdate.conf
 [ -f "$CONF" ] && . "$CONF"

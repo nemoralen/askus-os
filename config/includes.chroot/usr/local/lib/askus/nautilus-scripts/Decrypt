@@ -1,0 +1,9 @@
+#!/bin/bash
+# Decrypt .gpg / .asc files (password or your GnuPG key). GnuPG asks for the password itself.
+n=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  out="${f%.gpg}"; out="${out%.asc}"; [ "$out" = "$f" ] && out="$f.decrypted"
+  gpg --yes -o "$out" -d "$f" && n=$((n+1))
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+notify-send --app-name="ASKus" "Decrypted $n file(s)"
