@@ -1,15 +1,19 @@
 #!/bin/bash
 # ASKus OS — session admin helpers.
-#   set-password   (stdin: password)  -> enables sudo for this session (Welcome screen only)
+#   set-password   (stdin: password)  -> enables sudo for this session
 #   set-lock-password (stdin: password) -> password for the lock screen (no admin rights)
 #   set-time "YYYY-MM-DD HH:MM"       -> set the clock in UTC (Tor refuses to work with a wrong clock)
+# All of them only work while the Welcome screen is open. Once it is closed, any app could
+# otherwise call them through pkexec without a password.
 set -euo pipefail
 FLAG=/run/askus/welcome-open
+CLOSED=/run/askus/welcome-closed   # one-way: once it exists, the Welcome can't be reopened
 die() { echo "error: $*" >&2; exit 1; }
+welcome_open() { [ -e "$FLAG" ] && [ ! -e "$CLOSED" ]; }
 [ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
+welcome_open || die "this can only be changed from the Welcome screen at startup"
 case "${1:-}" in
   set-password)
-    [ -e "$FLAG" ] || die "the administration password can only be set from the Welcome screen"
     IFS= read -r PW || true
     [ ${#PW} -ge 6 ] || die "password must be at least 6 characters"
     printf 'askus:%s\n' "$PW" | chpasswd

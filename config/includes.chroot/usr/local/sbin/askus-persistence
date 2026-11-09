@@ -1,14 +1,16 @@
 #!/bin/bash
 # ASKus OS — encrypted persistent storage on the boot USB (LUKS2 + ext4).
 #   status | create | unlock | lock | finish
-# Passphrases are read from stdin. create/unlock only work while the Welcome
+# Passphrases are read from stdin. create/unlock/lock only work while the Welcome
 # screen is open (flag /run/askus/welcome-open), so apps can't use this later.
+# "finish" closes the Welcome for good (/run/askus/welcome-closed is never removed).
 set -euo pipefail
 
 LABEL=ASKusPersistence
 MAP=askus-persist
 MNT=/run/askus/persistence
 FLAG=/run/askus/welcome-open
+CLOSED=/run/askus/welcome-closed
 U=askus
 H=/home/$U
 
@@ -26,7 +28,8 @@ FEATURES=(
 )
 
 die() { echo "error: $*" >&2; exit 1; }
-need_flag() { [ -e "$FLAG" ] || die "persistent storage can only be changed from the Welcome screen at startup"; }
+welcome_open() { [ -e "$FLAG" ] && [ ! -e "$CLOSED" ]; }
+need_flag() { welcome_open || die "persistent storage can only be changed from the Welcome screen at startup"; }
 [ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
 
 boot_disk() {
@@ -63,22 +66,44 @@ free_region() {
 
 read_pass() { IFS= read -r PASS || true; [ ${#PASS} -ge 8 ] || die "passphrase must be at least 8 characters"; }
 
+# The targets in the home folder belong to the user. If any part of such a path were a
+# symbolic link (e.g. ~/Persistent -> /usr/local/sbin), root would chown and mount over
+# the link's target instead. So refuse links, and do the work in $H as the user.
+no_symlinks() {
+  local cur="" c parts
+  IFS=/ read -ra parts <<<"${1#/}"
+  for c in "${parts[@]}"; do
+    cur="$cur/$c"
+    [ -L "$cur" ] && die "refusing to use $cur: it is a symbolic link"
+  done
+  return 0
+}
+
 bind_features() {
   local f name target owner mode src
   for f in "${FEATURES[@]}"; do
     IFS=: read -r name target owner mode <<<"$f"
     src="$MNT/$name"
+    no_symlinks "$target"
     mountpoint -q "$target" && continue
-    mkdir -p "$target"
-    if [ ! -d "$src" ]; then
-      mkdir -p "$src"
-      cp -a "$target/." "$src/" 2>/dev/null || true        # seed with current contents
+    if [ "$owner" = user ]; then
+      runuser -u "$U" -- mkdir -p -- "$target"
+      if [ ! -d "$src" ]; then
+        mkdir -p "$src"; chown -h "$U:$U" "$src"
+        runuser -u "$U" -- cp -a -- "$target/." "$src/" 2>/dev/null || true   # seed with current contents
+      fi
+      chown -h "$U:$U" "$src"
+    else
+      mkdir -p "$target"
+      if [ ! -d "$src" ]; then
+        mkdir -p "$src"
+        cp -a "$target/." "$src/" 2>/dev/null || true        # seed with current contents
+      fi
     fi
-    if [ "$owner" = user ]; then chown "$U:$U" "$src" "$target"; fi
     chmod "$mode" "$src"
+    no_symlinks "$target"      # check again right before mounting
     mount --bind "$src" "$target"
   done
-  chown "$U:$U" "$H/.config" 2>/dev/null || true
   systemctl try-restart tor@default.service tor.service 2>/dev/null || true
   nmcli connection reload 2>/dev/null || true
   systemctl start --no-block askus-additional-software.service 2>/dev/null || true
@@ -104,7 +129,7 @@ case "$cmd" in
       echo "free_mb=$(( ${sz:-0} / 2048 ))"
     fi
     mountpoint -q "$MNT" && echo "unlocked=yes" || echo "unlocked=no"
-    [ -e "$FLAG" ] && echo "welcome=open" || echo "welcome=closed"
+    if welcome_open; then echo "welcome=open"; else echo "welcome=closed"; fi
     ;;
   create)
     need_flag
@@ -138,12 +163,17 @@ case "$cmd" in
     echo "unlocked=yes"
     ;;
   lock)
-    for f in "${FEATURES[@]}"; do IFS=: read -r _ target _ _ <<<"$f"; umount "$target" 2>/dev/null || true; done
+    need_flag
+    for f in "${FEATURES[@]}"; do
+      IFS=: read -r _ target _ _ <<<"$f"
+      no_symlinks "$target"
+      umount "$target" 2>/dev/null || true
+    done
     umount "$MNT" 2>/dev/null || true
     cryptsetup close $MAP 2>/dev/null || true
     echo "unlocked=no"
     ;;
   finish)
-    rm -f "$FLAG"; echo "welcome=closed" ;;
+    touch "$CLOSED"; rm -f "$FLAG"; echo "welcome=closed" ;;
   *) die "usage: askus-persistence status|create|unlock|lock|finish" ;;
 esac

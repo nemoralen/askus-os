@@ -5,7 +5,8 @@ FLAG=/run/askus/welcome-open
 CONF=/etc/tor/torrc.d/bridges.conf
 die() { echo "error: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "must run as root (use pkexec)"
-[ -e "$FLAG" ] || die "bridges can only be changed from the Welcome screen"
+welcome_open() { [ -e "$FLAG" ] && [ ! -e /run/askus/welcome-closed ]; }   # see askus-persistence
+welcome_open || die "bridges can only be changed from the Welcome screen"
 
 restart() { systemctl restart tor@default.service 2>/dev/null || systemctl restart tor.service; }
 
