@@ -80,6 +80,21 @@ For sites where you log in as yourself anyway (business email, banking, YouTube)
 - **Everyday Browser** forgets everything when you close it. **Everyday Browser (keep logins)** saves logins and bookmarks in your Persistent Storage.
 - **Not anonymous:** once you log in, the site knows it's you. Use **Tor Browser** for anything anonymous, and never mix the two for the same task.
 
+## ASKus Assistant (AI)
+
+A chat app in the dock with two modes. The window colour always shows which one you're using:
+
+| Mode | Where it runs | Privacy |
+|---|---|---|
+| **Claude** (purple) | Anthropic's servers, reached through Tor. Needs an API key from console.anthropic.com. | **Private, not anonymous.** Your IP is hidden, but your API account identifies you. |
+| **Local AI** (green) | On your computer with Ollama, completely offline after a one-time download (about 2–7 GB, through Tor). | **Fully private.** Nothing leaves the machine. |
+
+- **Sandboxed** with firejail. It cannot see your Persistent folder, wallet, keys, Tor Browser, Tor settings or USB drives.
+- **Files only when you share them.** Put a file in **Shared with AI** (in Files) and click 📎. It reads text, images and PDFs; PDFs work with Claude only.
+- **Switching modes starts a new conversation,** so nothing from Local AI is ever sent to Claude.
+- The API key and the Local AI live in Persistent Storage when it's unlocked; otherwise they're forgotten at shutdown.
+- **Don't paste anything from anonymous Tor sessions into Claude.**
+
 ## Automatic program updates
 
 About 1–5 minutes after Tor connects, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. Tor Browser updates itself the same way.

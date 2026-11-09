@@ -34,3 +34,4 @@ curl
 python3
 xz-utils
 unattended-upgrades
+zstd

@@ -1,0 +1,37 @@
+#!/bin/bash
+# ASKus Assistant launcher: runs the assistant in a firejail sandbox whose home
+# folder is separate from yours. It can only see files you put in "Shared with AI".
+#  - Persistent Storage unlocked -> ~/Persistent/.askus-assistant (API key, local AI kept)
+#  - otherwise                   -> a folder in RAM, erased at shutdown
+if mountpoint -q "$HOME/Persistent"; then
+  DIR="$HOME/Persistent/.askus-assistant"
+else
+  DIR="/tmp/askus-assistant-$(id -u)"
+fi
+mkdir -p "$DIR/Shared"
+chmod 700 "$DIR"
+
+# "Shared with AI" in your home folder (and in the Files sidebar) points at the sandbox's inbox
+LINK="$HOME/Shared with AI"
+if [ -L "$LINK" ] || [ ! -e "$LINK" ]; then ln -sfn "$DIR/Shared" "$LINK"; fi
+BM="$HOME/.config/gtk-3.0/bookmarks"
+mkdir -p "$(dirname "$BM")"
+grep -q "Shared%20with%20AI" "$BM" 2>/dev/null || echo "file://$HOME/Shared%20with%20AI Shared with AI" >> "$BM"
+
+APP=/usr/local/lib/askus-assistant/assistant.py
+if command -v firejail >/dev/null 2>&1; then
+  # Explicit rules (not firejail's default profile, whose Landlock rules would stop the
+  # local AI engine stored in the sandbox home from running). Hidden from the assistant:
+  # the unlocked Persistent Storage, Tor Browser, Tor settings and removable drives.
+  exec firejail --quiet --noprofile --name=askus-assistant \
+       --private="$DIR" --private-tmp \
+       --noroot --caps.drop=all --seccomp --nonewprivs --nogroups --restrict-namespaces \
+       --protocol=unix,inet,inet6 --novideo \
+       --blacklist=/run/askus --blacklist=/opt/tor-browser --blacklist=/etc/tor \
+       --blacklist=/media --blacklist=/mnt --blacklist=/run/media --blacklist=/run/live \
+       /usr/bin/python3 "$APP" "$@"
+else
+  zenity --warning --title="ASKus Assistant" --width=360 \
+    --text="The sandbox (firejail) isn't installed, so the assistant will run without isolation." || exit 0
+  HOME="$DIR" exec /usr/bin/python3 "$APP" "$@"
+fi

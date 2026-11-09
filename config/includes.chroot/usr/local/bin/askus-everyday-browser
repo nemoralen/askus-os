@@ -31,6 +31,7 @@ if command -v firejail >/dev/null 2>&1; then
   PROFILE=/etc/firejail/brave.profile
   [ -f "$PROFILE" ] && P=(--profile="$PROFILE") || P=()
   firejail --quiet "${P[@]}" --private="$DIR" \
+    --blacklist=/run/askus --blacklist=/opt/tor-browser --blacklist=/etc/tor --blacklist=/run/live \
     brave-browser --class=EverydayBrowser --no-default-browser-check --no-first-run "$@"
 else
   brave-browser --class=EverydayBrowser --user-data-dir="$DIR/profile" \

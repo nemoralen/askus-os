@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Assistant
+GenericName=AI Assistant
+Comment=Chat with Claude (private, not anonymous) or an offline Local AI, in a sandbox
+Exec=/usr/local/bin/askus-assistant
+Icon=askus-logo
+Categories=Utility;Office;
+Keywords=ai;claude;assistant;chat;llm;ollama;
+StartupWMClass=org.askus.Assistant
