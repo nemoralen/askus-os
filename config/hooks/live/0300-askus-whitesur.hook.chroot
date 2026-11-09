@@ -1,18 +1,26 @@
 #!/bin/bash
 # macOS-style look: WhiteSur GTK / GNOME Shell theme, icons and cursors, pulled from GitHub.
+# Pinned to reviewed commits: their install scripts run as root inside the image, and the
+# result is signed as an ASKus release. To update, review the new commits and change the SHAs.
 set -u
 export DEBIAN_FRONTEND=noninteractive
-GTK_REF=${WHITESUR_GTK_REF:-master}
-ICON_REF=${WHITESUR_ICON_REF:-master}
-CURSOR_REF=${WHITESUR_CURSOR_REF:-master}
+GTK_REF=${WHITESUR_GTK_REF:-d5782652d412137e26fb8ff55b55a5572e4c6995}      # 2026-09-11
+ICON_REF=${WHITESUR_ICON_REF:-73d8040da51a9ed74e47c7366e7e9ff437601a5c}    # 2026-09-10
+CURSOR_REF=${WHITESUR_CURSOR_REF:-e190baf618ed95ee217d2fd45589bd309b37672b}  # 2025-04-05
 
 BUILD_DEPS="git sassc libglib2.0-dev-bin libxml2-utils"
 apt-get install -y --no-install-recommends $BUILD_DEPS
 
+# git fetch by commit id: git checks the content against that id
+fetch() {   # repo dir ref
+  git init -q "$2" && git -C "$2" fetch -q --depth 1 "https://github.com/vinceliuice/$1.git" "$3" &&
+    git -C "$2" checkout -q FETCH_HEAD
+}
 W=/tmp/whitesur; rm -rf $W; mkdir -p $W
-git clone --depth 1 -b "$GTK_REF"    https://github.com/vinceliuice/WhiteSur-gtk-theme.git  $W/gtk
-git clone --depth 1 -b "$ICON_REF"   https://github.com/vinceliuice/WhiteSur-icon-theme.git $W/icons
-git clone --depth 1 -b "$CURSOR_REF" https://github.com/vinceliuice/WhiteSur-cursors.git    $W/cursors
+for r in "WhiteSur-gtk-theme gtk $GTK_REF" "WhiteSur-icon-theme icons $ICON_REF" "WhiteSur-cursors cursors $CURSOR_REF"; do
+  set -- $r
+  fetch "$1" "$W/$2" "$3" || { echo "[askus] could not fetch $1 at $3"; exit 1; }
+done
 
 # GTK3 + GNOME Shell theme (system-wide)
 ( cd $W/gtk && ./install.sh -d /usr/share/themes -c dark -c light --silent-mode ) || echo "[askus] WhiteSur GTK install reported an error"

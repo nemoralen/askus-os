@@ -1,0 +1,8 @@
+# Actions are pinned to full commit SHAs (a moved tag can't change what runs next to the
+# signing key). Dependabot proposes the updates as pull requests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
