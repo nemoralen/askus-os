@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: askus-build
+  group: askus-build-${{ github.ref }}   # test builds of other branches never queue behind (or cancel) main's
   cancel-in-progress: false
 
 env:
