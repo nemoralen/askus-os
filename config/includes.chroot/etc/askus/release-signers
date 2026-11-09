@@ -1,0 +1,3 @@
+# Public key(s) allowed to sign ASKus OS releases (ssh-keygen -Y verify allowed_signers format).
+# The matching private key is the GitHub secret ASKUS_SIGNING_KEY; Stan keeps an offline backup.
+askus-release namespaces="askus-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF+PtUnXm1jrX7U/HGT8kL6go2OtJ9cnMFbxmMOqnVff ASKus release key
