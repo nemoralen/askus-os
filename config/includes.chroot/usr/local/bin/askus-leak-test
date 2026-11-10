@@ -49,6 +49,9 @@ def t_services():
 # 2 ─ ordinary app traffic (no proxy settings at all) still comes out of Tor
 def t_transparent():
     d = tor_ip()
+    if not d:              # each new site gets its own Tor circuit; the first one can be slow
+        time.sleep(5)
+        d = tor_ip()
     if d and d.get("IsTor"):
         add("PASS", "Apps without proxy settings go through Tor", f"websites see the Tor exit {d.get('IP')}")
     elif d:
@@ -174,7 +177,8 @@ def t_clock():
         add("PASS", "System clock is correct", f"off by {abs(skew):.0f} s")
     else:
         add("WARN", "System clock is correct",
-            f"off by {abs(skew)/60:.0f} minutes — fix it in the Welcome screen (Set time)")
+            f"off by {abs(skew)/60:.0f} minutes — it corrects itself within a few minutes of Tor connecting; "
+            "if not, use Set time in the Welcome screen")
 
 
 # 10 ─ other hardening
