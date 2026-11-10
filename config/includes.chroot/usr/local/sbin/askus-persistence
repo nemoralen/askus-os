@@ -61,6 +61,32 @@ find_volume() {
   return 1
 }
 
+# A leftover EMPTY partition behind the system area (e.g. from a "create" that stopped
+# halfway) -> "device size_in_sectors". It has no file system and no encryption, so it holds
+# no data; it is reused instead of reporting "not enough free space".
+empty_part() {
+  local disk=$1 p name start size
+  for p in $(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{print $1}'); do
+    name=${p##*/}
+    start=$(cat "/sys/class/block/$name/start" 2>/dev/null || echo 0)
+    size=$(cat "/sys/class/block/$name/size" 2>/dev/null || echo 0)
+    [ "$start" -ge "$RESERVED_SECTORS" ] || continue
+    [ "$size" -ge $((1024*2048)) ] || continue
+    [ -z "$(blkid -p -s TYPE -o value "$p" 2>/dev/null)" ] || continue    # has data / a file system
+    echo "$p $size"; return 0
+  done
+  return 1
+}
+
+# Device node of partition number N of DISK (sda -> sda3, nvme0n1 -> nvme0n1p3)
+part_by_number() {
+  local disk=$1 n=$2 p
+  for p in $(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{print $1}'); do
+    [ "$(cat "/sys/class/block/${p##*/}/partition" 2>/dev/null)" = "$n" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
 # Largest free region on the disk -> "start size" in 512-byte sectors (1 MiB aligned)
 free_region() {
   sfdisk -F "$1" 2>/dev/null | awk -v min="$RESERVED_SECTORS" '
@@ -130,6 +156,7 @@ case "$cmd" in
     echo "medium=usb"; echo "disk=$disk"
     if vol=$(find_volume "$disk"); then echo "volume=$vol"; else echo "volume=none"
       read -r _ sz < <(free_region "$disk" || true) || true
+      if [ "${sz:-0}" -lt $((1024*2048)) ]; then read -r _ sz < <(empty_part "$disk" || true) || true; fi
       echo "free_mb=$(( ${sz:-0} / 2048 ))"
     fi
     mountpoint -q "$MNT" && echo "unlocked=yes" || echo "unlocked=no"
@@ -140,15 +167,21 @@ case "$cmd" in
     disk=$(boot_disk) || die "persistent storage needs ASKus OS to be started from a USB stick"
     find_volume "$disk" >/dev/null && die "persistent storage already exists"
     read_pass
-    read -r start size < <(free_region "$disk") || die "no free space on the USB stick"
-    [ "$size" -ge $((1024*2048)) ] || die "need a USB stick of at least 6 GB (4 GB is reserved for the system and updates)"
-    before=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"' | wc -l)
-    echo "$start,$size,L" | sfdisk --append --force --no-reread --no-tell-kernel "$disk" >/dev/null
-    partx -a "$disk" 2>/dev/null || partx -u "$disk" 2>/dev/null || true
-    udevadm settle; sleep 1
-    after=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"' | wc -l)
-    [ "$after" -gt "$before" ] || die "the new partition did not appear; please restart and try again"
-    part=$(lsblk -lnpo NAME,TYPE "$disk" | awk '$2=="part"{p=$1} END{print p}')
+    if read -r part _ < <(empty_part "$disk"); then
+      :   # reuse the empty partition left by an earlier attempt
+    else
+      read -r start size < <(free_region "$disk") || die "no free space on the USB stick"
+      [ "$size" -ge $((1024*2048)) ] || die "need a USB stick of at least 6 GB (4 GB is reserved for the system and updates)"
+      echo "$start,$size,L" | sfdisk --append --force --no-reread --no-tell-kernel "$disk" >/dev/null
+      # number of the partition just added (the last one in the table)
+      n=$(sfdisk -d "$disk" | awk '/^\/dev\//{d=$1} END{if (match(d, /[0-9]+$/)) print substr(d, RSTART)}')
+      [ -n "$n" ] || die "could not read the new partition table"
+      # The stick is in use (ASKus runs from it), so the kernel can't re-read the whole table.
+      # Tell it about just the new partition instead.
+      partx --add --nr "$n" "$disk" 2>/dev/null || partx --update --nr "$n" "$disk" 2>/dev/null || true
+      udevadm settle; sleep 1
+      part=$(part_by_number "$disk" "$n") || die "the new partition did not appear; please restart and try again (it will be reused)"
+    fi
     printf '%s' "$PASS" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf argon2id \
         --label "$LABEL" --key-file=- "$part"
     printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" $MAP
