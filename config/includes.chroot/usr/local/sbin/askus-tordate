@@ -1,18 +1,25 @@
 #!/bin/bash
-# ASKus OS: fix a wrong clock so Tor can connect (like Tails' "tordate").
+# ASKus OS: fix a wrong clock (like Tails' "tordate" + "htpdate").
 # PCs that also run Windows keep the hardware clock in LOCAL time, so a Linux system that
-# reads it as UTC is off by several hours, and Tor refuses a consensus that isn't valid "now".
-# Tor still downloads the consensus. We read its signed validity window and, if our clock is
-# outside it, set the clock to valid-after + 30 minutes (accurate to within ~30 minutes,
-# which is all Tor needs) and restart Tor. Nothing is fetched outside Tor, and the
-# hardware clock is never written, so Windows' clock is left alone.
+# reads it as UTC is off by several hours (5 h in Florida).
+#
+# Step 1 - if the clock is so far off that Tor can't use its consensus, set it from the
+#          consensus' signed validity window (good to ~30 minutes) and restart Tor.
+# Step 2 - once Tor works, read the HTTPS "Date" header of three well-known sites, each over
+#          its own Tor circuit, take the middle value and set the clock to it (good to a few
+#          seconds). HTTPS means a Tor exit can't fake the time; using three sites means one
+#          wrong server can't either.
+# Nothing is fetched outside Tor, and the hardware clock is never written, so Windows'
+# clock is left alone.
 D=${ASKUS_TOR_DIR:-/var/lib/tor}
 LOG=/run/askus/tordate.log
 mkdir -p /run/askus
 log() { echo "$(date -u '+%F %T') $*" >> "$LOG"; }
 ts() { date -u -d "$1 UTC" +%s 2>/dev/null; }
+tor_ok() { curl -s -m 20 --proxy socks5h://askus-tordate:check@127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null | grep -q '"IsTor":true'; }
 
-for i in $(seq 1 120); do                       # up to ~10 minutes after boot
+# ---- step 1: consensus window -------------------------------------------------------
+consensus_fix() {
   for f in "$D/cached-microdesc-consensus" "$D/unverified-microdesc-consensus" \
            "$D/cached-consensus" "$D/unverified-consensus"; do
     [ -s "$f" ] || continue
@@ -26,15 +33,43 @@ for i in $(seq 1 120); do                       # up to ~10 minutes after boot
       log "clock $(date -u -d @"$NOW" '+%F %T') outside consensus $VA .. $VU - setting $(date -u -d @"$NEW" '+%F %T')"
       date -u -s "@$NEW" >/dev/null
       systemctl restart tor@default.service 2>/dev/null || systemctl restart tor.service 2>/dev/null
-      echo "fixed" > /run/askus/tordate.state
-      exit 0
-    fi
-    # clock is inside the window; once Tor is working we're done
-    if curl -s -m 10 --proxy socks5h://127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null | grep -q '"IsTor":true'; then
-      echo "ok" > /run/askus/tordate.state
-      exit 0
+      return 0
     fi
   done
+  return 1
+}
+
+# ---- step 2: HTTPS Date headers over Tor --------------------------------------------
+https_date() {   # $1 = url, $2 = circuit name -> prints epoch seconds
+  local d
+  d=$(curl -sI -m 40 --proxy "socks5h://askus-htpdate-$2:x@127.0.0.1:9050" "$1" 2>/dev/null \
+      | tr -d '\r' | sed -n 's/^[Dd]ate: //p' | head -n1)
+  [ -n "$d" ] && date -u -d "$d" +%s 2>/dev/null
+}
+
+https_fix() {
+  local vals=() v i=0 mid now skew
+  for url in https://check.torproject.org/ https://www.debian.org/ https://www.eff.org/; do
+    i=$((i+1))
+    v=$(https_date "$url" "$i") && [ -n "$v" ] && vals+=("$v")
+  done
+  [ "${#vals[@]}" -ge 2 ] || return 1
+  mid=$(printf '%s\n' "${vals[@]}" | sort -n | sed -n "$(( (${#vals[@]} + 1) / 2 ))p")
+  now=$(date -u +%s); skew=$(( now - mid )); skew=${skew#-}
+  if [ "$skew" -gt 60 ]; then
+    log "clock off by ${skew}s (HTTPS over Tor, ${#vals[@]} sites) - setting $(date -u -d @"$mid" '+%F %T')"
+    date -u -s "@$mid" >/dev/null
+  fi
+  return 0
+}
+
+for i in $(seq 1 120); do                       # up to ~10 minutes after boot
+  consensus_fix && echo "fixed" > /run/askus/tordate.state
+  if tor_ok; then
+    for t in 1 2 3; do https_fix && break; sleep 20; done
+    grep -q fixed /run/askus/tordate.state 2>/dev/null || echo "ok" > /run/askus/tordate.state
+    exit 0
+  fi
   sleep 5
 done
 exit 0
