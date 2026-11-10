@@ -28,6 +28,7 @@ FEATURES=(
   "askus-settings:$H/.config/askus:user:0700"
   "feather:$H/.config/feather:user:0700"
   "monero-wallets:$H/Monero:user:0700"
+  "screenshots:$H/Pictures/Screenshots:user:0700"
 )
 
 die() { echo "error: $*" >&2; exit 1; }

@@ -1,0 +1,23 @@
+#!/bin/bash
+# Clipboard history (Win+V) - "Clipboard Indicator" GNOME extension, pinned to a reviewed
+# commit (fetched by commit id, so git checks the content). History stays in memory only,
+# and password managers / wallets are excluded (see dconf 00-askus).
+set -u
+export DEBIAN_FRONTEND=noninteractive
+REF=${CLIPBOARD_INDICATOR_REF:-f4e191e667d45264efe80f57d309ff46095eee9f}   # 2026-11-09, reviewed
+UUID=clipboard-indicator@tudmotu.com
+DEST=/usr/share/gnome-shell/extensions/$UUID
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+
+apt-get install -y --no-install-recommends git libglib2.0-bin >/dev/null || { echo "[askus] clipboard: tools missing - skipped"; exit 0; }
+if git init -q "$T/ci" && git -C "$T/ci" fetch -q --depth 1 https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator.git "$REF" &&
+   git -C "$T/ci" checkout -q FETCH_HEAD; then
+  rm -rf "$DEST"; mkdir -p "$DEST"
+  ( cd "$T/ci" && cp -r metadata.json *.js stylesheet.css schemas locale "$DEST"/ 2>/dev/null )
+  glib-compile-schemas "$DEST/schemas"
+  chmod -R a+rX "$DEST"
+  echo "[askus] clipboard history installed ($REF)"
+else
+  echo "[askus] clipboard: could not fetch $REF - skipped"
+fi
+exit 0

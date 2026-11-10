@@ -50,7 +50,7 @@ natural-scroll=true
 two-finger-scrolling-enabled=true
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com', 'askus-tooltips@askus', 'askus-local-clock@askus']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com', 'askus-tooltips@askus', 'askus-local-clock@askus', 'clipboard-indicator@tudmotu.com']
 favorite-apps=['askus-tor-browser.desktop', 'askus-everyday-browser.desktop', 'askus-assistant.desktop', 'org.gnome.Nautilus.desktop', 'electrum.desktop', 'org.keepassxc.KeePassXC.desktop', 'org.kde.kleopatra.desktop', 'org.mozilla.Thunderbird.desktop', 'thunderbird.desktop', 'askus-tor-status.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop']
 welcome-dialog-last-shown-version='999'
 disable-user-extensions=false
@@ -145,3 +145,39 @@ always-show-universal-access-status=true
 [org/gnome/settings-daemon/plugins/media-keys]
 # Ctrl+Alt+Delete is the ASKus panic key, not the log-out dialog
 logout=@as []
+# ---- Windows-style shortcuts ----
+home=['<Super>e']
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/askus-power/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/askus-sound/']
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/askus-power]
+name='Power menu (like Windows Win+X)'
+binding='<Super>x'
+command='/usr/local/bin/askus-power-menu'
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/askus-sound]
+name='Sound output (like Windows Ctrl+Win+V)'
+binding='<Primary><Super>v'
+command='/usr/local/bin/askus-sound-output'
+
+[org/gnome/shell/keybindings]
+# Win+Shift+S: snip an area (also PrintScreen). Saved to Pictures/Screenshots + copied, with a pop-up.
+show-screenshot-ui=['Print', '<Shift><Super>s']
+# Win+V is the clipboard now; notifications stay on Win+M
+toggle-message-tray=['<Super>m']
+
+[org/gnome/desktop/wm/keybindings]
+show-desktop=['<Super>d']
+
+[org/gnome/shell/extensions/clipboard-indicator]
+# Win+V: clipboard history. Kept in memory only (gone at shutdown), never from password
+# managers or wallets, and cleared every hour.
+toggle-menu=['<Super>v']
+enable-keybindings=true
+history-size=25
+cache-only-favorites=true
+cache-images=false
+clear-on-boot=true
+clear-history-on-interval=true
+clear-history-interval=60
+notify-on-copy=false
+excluded-apps=['KeePassXC', 'org.keepassxc.KeePassXC', 'keepassxc', 'Electrum', 'electrum', 'feather', 'Feather', 'org.kde.kleopatra', 'kleopatra', 'Kleopatra']

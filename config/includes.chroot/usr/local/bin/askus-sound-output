@@ -1,0 +1,95 @@
+#!/usr/bin/python3
+"""ASKus OS: choose the sound output (Ctrl+Win+V) - speakers, headphones, HDMI, Bluetooth.
+Switching also moves the sound that is playing right now."""
+import json
+import subprocess
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+
+
+def pactl(*args):
+    return subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=10)
+
+
+def sinks():
+    try:
+        data = json.loads(pactl("-f", "json", "list", "sinks").stdout or "[]")
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return [], ""
+    default = pactl("get-default-sink").stdout.strip()
+    return [(s["name"], s.get("description") or s["name"]) for s in data], default
+
+
+def icon_for(name, desc):
+    t = (name + " " + desc).lower()
+    if "bluez" in t or "bluetooth" in t:
+        return "audio-headphones-symbolic"
+    if "hdmi" in t or "displayport" in t:
+        return "video-display-symbolic"
+    if "headphone" in t or "headset" in t:
+        return "audio-headphones-symbolic"
+    return "audio-speakers-symbolic"
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Sound output", resizable=False, default_width=380)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                      margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        title = Gtk.Label(label="Play sound through")
+        title.add_css_class("title-4")
+        box.append(title)
+        lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        lst.add_css_class("boxed-list")
+        items, default = sinks()
+        group = None
+        if not items:
+            lst.append(Adw.ActionRow(title="No sound outputs found"))
+        for name, desc in items:
+            row = Adw.ActionRow(title=desc, activatable=True)
+            row.add_prefix(Gtk.Image.new_from_icon_name(icon_for(name, desc)))
+            check = Gtk.CheckButton(active=(name == default), valign=Gtk.Align.CENTER)
+            if group:
+                check.set_group(group)
+            group = group or check
+            row.add_suffix(check)
+            row.set_activatable_widget(check)
+            check.connect("toggled", self.pick, name)
+            lst.append(row)
+        box.append(lst)
+        more = Gtk.Button(label="Sound settings…")
+        more.add_css_class("flat")
+        more.connect("clicked", self.settings)
+        box.append(more)
+        self.set_content(box)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", lambda _c, k, *_: (self.close(), True)[1] if k == Gdk.KEY_Escape else False)
+        self.add_controller(keys)
+
+    def pick(self, check, name):
+        if not check.get_active():
+            return
+        pactl("set-default-sink", name)
+        for line in pactl("list", "short", "sink-inputs").stdout.splitlines():   # move what's playing now
+            sid = line.split("\t")[0]
+            if sid.isdigit():
+                pactl("move-sink-input", sid, name)
+
+    def settings(self, *_):
+        subprocess.Popen(["gnome-control-center", "sound"], start_new_session=True)
+        self.close()
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.SoundOutput")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    App().run(None)

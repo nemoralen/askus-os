@@ -1,0 +1,63 @@
+#!/usr/bin/python3
+"""ASKus OS: power menu (Win+X) - Lock, Sleep, Restart, Shut down. Esc closes it."""
+import subprocess
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+
+ACTIONS = [
+    ("Lock", "system-lock-screen-symbolic", ["loginctl", "lock-session"]),
+    ("Sleep", "weather-clear-night-symbolic", ["systemctl", "suspend"]),
+    ("Restart", "system-reboot-symbolic", ["systemctl", "reboot"]),
+    ("Shut down", "system-shutdown-symbolic", ["systemctl", "poweroff"]),
+]
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Power", resizable=False, default_width=320)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        title = Gtk.Label(label="Power options")
+        title.add_css_class("title-4")
+        box.append(title)
+        first = None
+        for label, icon, cmd in ACTIONS:
+            b = Gtk.Button()
+            row = Gtk.Box(spacing=12)
+            row.append(Gtk.Image.new_from_icon_name(icon))
+            row.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+            b.set_child(row)
+            if label == "Shut down":
+                b.add_css_class("destructive-action")
+            b.connect("clicked", self.run, cmd)
+            box.append(b)
+            first = first or b
+        cancel = Gtk.Button(label="Cancel")
+        cancel.add_css_class("flat")
+        cancel.connect("clicked", lambda *_: self.close())
+        box.append(cancel)
+        self.set_content(box)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", lambda _c, k, *_: (self.close(), True)[1] if k == Gdk.KEY_Escape else False)
+        self.add_controller(keys)
+        if first:
+            first.grab_focus()
+
+    def run(self, _b, cmd):
+        self.close()
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.PowerMenu")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    App().run(None)

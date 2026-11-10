@@ -97,6 +97,19 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 - **Small tools:** Clocks, Calendar, Disk Usage, Characters, Fonts, and a file checksum tool.
 - **Feather (Monero wallet):** the Tails/Whonix build, installed only if its signature from Feather's release key (`8185 E158 A333 30C7 FD61 BC0D 1F76 E155 CEFB A71C`) checks out. It connects through Tor. Wallets in `~/Monero` and its settings are kept in Persistent Storage.
 
+## Windows-style shortcuts
+
+| Keys | Does |
+|---|---|
+| Win + V | Clipboard history (in memory only, cleared hourly; never keeps what you copy from KeePassXC, Kleopatra or the wallets) |
+| Win + X | Power menu: Lock, Sleep, Restart, Shut down |
+| Win + Shift + S (or PrintScreen) | Snip: select an area, a pop-up confirms it, it's copied and saved to Pictures › Screenshots (kept in Persistent Storage) |
+| Win + E | Files |
+| Ctrl + Win + V | Sound output: speakers, headphones, HDMI, Bluetooth |
+| Win + D | Show desktop |
+| Win + L | Lock |
+| Delete / Shift + Delete | Move to Trash / delete permanently |
+
 ## My Apps (your own apps, kept private)
 
 Copy an app's folder into **Persistent → My Apps** and it appears in the app grid within seconds. It works with web apps (a folder with `index.html`) and Python apps (a folder with a `.pyw` or `main.py`). Your apps stay in your encrypted storage and are **not** part of the public ASKus OS image.

@@ -44,3 +44,5 @@ gtkhash
 collision
 # (Feather wallet is installed and signature-checked by hook 0470.)
 rsync
+# Sound output switcher (Ctrl+Win+V)
+pulseaudio-utils
