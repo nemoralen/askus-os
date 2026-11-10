@@ -25,6 +25,9 @@ FEATURES=(
   "network-connections:/etc/NetworkManager/system-connections:root:0700"
   "tor-bridges:/etc/tor/torrc.d:root:0755"
   "additional-software:/var/lib/askus/additional-software:root:0755"
+  "askus-settings:$H/.config/askus:user:0700"
+  "feather:$H/.config/feather:user:0700"
+  "monero-wallets:$H/Monero:user:0700"
 )
 
 die() { echo "error: $*" >&2; exit 1; }

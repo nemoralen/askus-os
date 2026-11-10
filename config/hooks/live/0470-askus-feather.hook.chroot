@@ -1,0 +1,54 @@
+#!/bin/bash
+# Feather - Monero wallet (Tails ships it too). The Tails/Whonix build ("-a") uses the
+# system's Tor instead of starting its own. It is only installed if its GPG signature
+# is valid and made by Feather's release key (fingerprint pinned below).
+set -u
+export DEBIAN_FRONTEND=noninteractive
+FPR=8185E158A33330C7FD61BC0D1F76E155CEFBA71C        # FeatherWallet <dev@featherwallet.org>
+KEY_URL=https://raw.githubusercontent.com/feather-wallet/feather/master/utils/pubkeys/featherwallet.asc
+DEST=/opt/feather
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+note() { echo "[askus] feather: $*"; }
+
+apt-get install -y --no-install-recommends gnupg curl ca-certificates jq >/dev/null || { note "could not install tools - skipped"; exit 0; }
+
+VER=$(curl -fsSL --retry 3 https://api.github.com/repos/feather-wallet/feather/releases/latest | jq -r .tag_name)
+case "$VER" in ""|null|*[!0-9.]*) VER=2.9.1; note "latest version unknown - using $VER" ;; esac   # still signature-checked
+F="feather-$VER-a.AppImage"
+BASE="https://github.com/feather-wallet/feather/releases/download/$VER"
+curl -fsSL --retry 3 -o "$T/$F" "$BASE/$F" &&
+curl -fsSL --retry 3 -o "$T/$F.asc" "$BASE/$F.asc" &&
+curl -fsSL --retry 3 -o "$T/key.asc" "$KEY_URL" || { note "download failed - skipped"; exit 0; }
+
+# Keyring with ONLY Feather's key, and only if its fingerprint is the pinned one
+export GNUPGHOME="$T/gpg"; mkdir -m 700 "$GNUPGHOME"
+gpg --batch --quiet --import "$T/key.asc" 2>/dev/null
+if ! gpg --batch --with-colons --fingerprint | grep -q "^fpr:::::::::$FPR:"; then
+  note "release key fingerprint does not match - NOT installed"; exit 0
+fi
+gpg --batch --export "$FPR" > "$T/feather.gpg"
+if ! gpgv --keyring "$T/feather.gpg" --status-fd 1 "$T/$F.asc" "$T/$F" 2>/dev/null | grep -q "VALIDSIG .*$FPR"; then
+  note "BAD signature on $F - NOT installed"; exit 0
+fi
+note "signature OK ($F)"
+
+# Unpack (no FUSE needed) into /opt/feather
+chmod +x "$T/$F"
+( cd "$T" && ./"$F" --appimage-extract >/dev/null ) || { note "could not unpack - skipped"; exit 0; }
+rm -rf "$DEST"; mv "$T/squashfs-root" "$DEST"
+chmod -R a+rX "$DEST"
+ICON=$(ls "$DEST"/*.png "$DEST"/*.svg 2>/dev/null | head -n1)
+cat > /usr/share/applications/askus-feather.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Feather Wallet
+Comment=Monero wallet (connects through Tor)
+Exec=$DEST/AppRun
+Icon=${ICON:-wallet}
+Categories=Finance;Network;
+Keywords=monero;xmr;wallet;crypto;
+EOF
+echo "$VER" > "$DEST/ASKUS-VERSION"
+note "installed Feather $VER"
+exit 0

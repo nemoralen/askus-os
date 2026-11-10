@@ -11,7 +11,7 @@ set -e
 COMMON="username=askus user-fullname=ASKus hostname=localhost locales=en_US.UTF-8 keyboard-layouts=us timezone=Etc/UTC \
 live-config.nocomponents=sudo,openssh-server,policykit \
 live-config.nottyautologin \
-live-config.user-default-groups=audio,cdrom,dip,floppy,video,plugdev,netdev,powerdev,scanner,bluetooth \
+live-config.user-default-groups=audio,cdrom,dip,floppy,video,plugdev,netdev,powerdev,scanner,bluetooth,lpadmin \
 noswap ipv6.disable=1 \
 init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 slab_nomerge \
 randomize_kstack_offset=on vsyscall=none debugfs=off \

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Clock Time Zone
+Comment=Show your local time in the top bar (the system stays on UTC)
+Exec=/usr/local/bin/askus-clock-zone
+Icon=preferences-system-time
+Categories=Settings;Utility;
+Keywords=time;clock;timezone;zone;local;

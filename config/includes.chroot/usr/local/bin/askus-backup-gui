@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+"""ASKus OS: Back Up Persistent Storage - keep an encrypted copy on a second USB stick."""
+import json
+import subprocess
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
+
+HELPER = "/usr/local/sbin/askus-backup"
+INIT = "/usr/local/sbin/askus-backup-init"
+
+
+def run(cmd, stdin=None, done=None, timeout=7200):
+    def work():
+        try:
+            p = subprocess.run(["pkexec"] + cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
+            res = (p.returncode == 0, p.stdout.strip(), (p.stderr or "").strip().replace("error: ", ""))
+        except Exception as e:  # noqa: BLE001
+            res = (False, "", str(e))
+        if done:
+            GLib.idle_add(done, *res)
+    threading.Thread(target=work, daemon=True).start()
+
+
+def human(n):
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000:
+            return f"{n:.0f} {u}"
+        n /= 1000
+    return f"{n:.0f} PB"
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Back Up Persistent Storage", default_width=540, default_height=560)
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Look for USB drives again")
+        refresh.connect("clicked", lambda *_: self.reload())
+        hb.pack_start(refresh)
+        view.add_top_bar(hb)
+        self.page = Adw.PreferencesPage()
+        intro = Adw.PreferencesGroup(
+            title="Keep a spare copy",
+            description="Plug in a second USB stick. The first time, it's prepared as an encrypted backup "
+                        "drive (this erases it). After that, \"Back up now\" copies your Persistent Storage "
+                        "to it - only the changes, so it's quick. If you lose this stick, restore from the backup.")
+        self.page.add(intro)
+        self.g_dev = Adw.PreferencesGroup(title="USB drives")
+        self.page.add(self.g_dev)
+        self.rows = []
+        self.spinner = Gtk.Spinner()
+        hb.pack_end(self.spinner)
+        view.set_content(self.page)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+        self.reload()
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text, timeout=6))
+
+    def busy(self, on):
+        self.spinner.set_spinning(on)
+        for r in self.rows:
+            r.set_sensitive(not on)
+
+    def reload(self):
+        for r in self.rows:
+            self.g_dev.remove(r)
+        self.rows = []
+        try:
+            p = subprocess.run(["pkexec", HELPER, "list"], capture_output=True, text=True, timeout=60)
+            drives = json.loads(p.stdout or "[]")
+        except Exception:  # noqa: BLE001
+            drives = []
+        if not drives:
+            r = Adw.ActionRow(title="No USB drive found", subtitle="Plug one in and press ⟳")
+            self.g_dev.add(r)
+            self.rows.append(r)
+            return
+        for d in drives:
+            r = Adw.ActionRow(title=d["model"], subtitle=f'{human(d["size"])} · {d["disk"]}' +
+                              (" · ASKus backup drive" if d["is_backup"] else ""))
+            r.add_prefix(Gtk.Image.new_from_icon_name("drive-removable-media-symbolic"))
+            if d["is_backup"]:
+                b = Gtk.Button(label="Back up now", valign=Gtk.Align.CENTER)
+                b.add_css_class("suggested-action")
+                b.connect("clicked", lambda _b, dd=d: self.ask_pass(dd, "run"))
+                r.add_suffix(b)
+                m = Gtk.Button(label="Restore…", valign=Gtk.Align.CENTER)
+                m.connect("clicked", lambda _b, dd=d: self.confirm_restore(dd))
+                r.add_suffix(m)
+            else:
+                b = Gtk.Button(label="Prepare as backup…", valign=Gtk.Align.CENTER)
+                b.add_css_class("destructive-action")
+                b.connect("clicked", lambda _b, dd=d: self.confirm_init(dd))
+                r.add_suffix(b)
+            self.g_dev.add(r)
+            self.rows.append(r)
+
+    # ---- dialogs
+    def pass_dialog(self, heading, body, confirm, label, cb, appearance=Adw.ResponseAppearance.SUGGESTED):
+        dlg = Adw.AlertDialog(heading=heading, body=body)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        e1 = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Backup passphrase")
+        box.append(e1)
+        e2 = None
+        if confirm:
+            e2 = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Repeat the passphrase")
+            box.append(e2)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("ok", label)
+        dlg.set_response_appearance("ok", appearance)
+        dlg.set_default_response("ok")
+
+        def resp(_d, r):
+            if r != "ok":
+                return
+            p1 = e1.get_text()
+            if len(p1) < 8:
+                self.toast("The passphrase must be at least 8 characters")
+                return
+            if e2 is not None and e2.get_text() != p1:
+                self.toast("The passphrases don't match")
+                return
+            cb(p1)
+        dlg.connect("response", resp)
+        dlg.present(self)
+
+    def ask_pass(self, d, cmd):
+        self.pass_dialog("Back up now", f"Enter the passphrase of the backup drive ({d['model']}).", False,
+                         "Back up", lambda p: self.do(cmd, d, p))
+
+    def confirm_restore(self, d):
+        self.pass_dialog("Restore from this backup?",
+                         "Files from the backup are copied into the Persistent Storage of THIS stick, "
+                         "replacing files with the same name. Use this on a new or replacement stick. "
+                         "Restart afterwards.", False, "Restore", lambda p: self.do("restore", d, p),
+                         Adw.ResponseAppearance.DESTRUCTIVE)
+
+    def confirm_init(self, d):
+        self.pass_dialog(f"Erase {d['model']}?",
+                         f"Everything on {d['model']} ({human(d['size'])}) will be deleted and it becomes an "
+                         "encrypted ASKus backup drive. Choose a passphrase for it (you can use the same one as "
+                         "your Persistent Storage). This needs the administration password set at startup.",
+                         True, "Erase and prepare", lambda p: self.do_init(d, p), Adw.ResponseAppearance.DESTRUCTIVE)
+
+    # ---- actions
+    def do(self, cmd, d, pw):
+        self.busy(True)
+        self.toast("Backing up… this can take a while the first time" if cmd == "run" else "Restoring…")
+
+        def done(ok, out, err):
+            self.busy(False)
+            if ok:
+                self.toast("Backup finished ✓" if cmd == "run" else "Restored ✓ - restart ASKus OS to use it")
+            else:
+                self.toast(err or "Something went wrong")
+            return False
+        run([HELPER, cmd, d["disk"]], stdin=pw + "\n", done=done)
+
+    def do_init(self, d, pw):
+        self.busy(True)
+
+        def done(ok, out, err):
+            self.busy(False)
+            if ok:
+                self.toast("Backup drive ready - now press \"Back up now\"")
+                self.reload()
+            else:
+                self.toast(err or "Could not prepare the drive (is an administration password set?)")
+            return False
+        run([INIT, d["disk"]], stdin=pw + "\n", done=done, timeout=900)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.Backup")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    App().run(None)

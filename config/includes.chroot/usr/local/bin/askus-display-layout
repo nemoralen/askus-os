@@ -1,0 +1,152 @@
+#!/usr/bin/python3
+"""ASKus OS: remember your monitor layout between restarts.
+
+GNOME saves the layout you set in Settings > Displays to ~/.config/monitors.xml, but the
+home folder is new at every start. This keeps a copy in ~/.config/askus (Persistent
+Storage) and puts it back after Persistent Storage is unlocked:
+
+  askus-display-layout --watch    (autostart) save changes, restore once per session
+  askus-display-layout restore    apply the saved layout now
+  askus-display-layout save       copy the current layout into Persistent Storage
+
+Only layouts saved for exactly the monitors that are connected now are applied, and only
+through GNOME's own display service, so a wrong or old file can't break the screen.
+"""
+import os
+import shutil
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+LIVE = os.path.expanduser("~/.config/monitors.xml")
+SAVED_DIR = os.path.expanduser("~/.config/askus")
+SAVED = os.path.join(SAVED_DIR, "monitors.xml")
+TRANSFORMS = {"normal": 0, "left": 1, "upside_down": 2, "right": 3}
+
+
+def bus_proxy():
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio
+    return Gio.DBusProxy.new_for_bus_sync(Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+                                          "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+                                          "org.gnome.Mutter.DisplayConfig", None)
+
+
+def spec_key(connector, vendor, product, serial):
+    return (vendor or "", product or "", serial or "", connector or "")
+
+
+def saved_configs(path):
+    """-> list of configurations: [ {key: (vendor,product,serial,connector) set, 'logical': [...]} ]"""
+    root = ET.parse(path).getroot()
+    out = []
+    for conf in root.findall("configuration"):
+        logical, keys = [], set()
+        for lm in conf.findall("logicalmonitor"):
+            mons = []
+            for m in lm.findall("monitor"):
+                sp = m.find("monitorspec")
+                mode = m.find("mode")
+                if sp is None or mode is None:
+                    continue
+                k = spec_key(sp.findtext("connector"), sp.findtext("vendor"),
+                             sp.findtext("product"), sp.findtext("serial"))
+                keys.add(k)
+                mons.append((k, int(mode.findtext("width", "0")), int(mode.findtext("height", "0")),
+                             float(mode.findtext("rate", "0"))))
+            tr = lm.find("transform")
+            t = 0
+            if tr is not None:
+                t = TRANSFORMS.get(tr.findtext("rotation", "normal"), 0)
+                if (tr.findtext("flipped", "no") or "no").lower() == "yes":
+                    t += 4
+            logical.append({"x": int(lm.findtext("x", "0")), "y": int(lm.findtext("y", "0")),
+                            "scale": float(lm.findtext("scale", "1")),
+                            "primary": (lm.findtext("primary", "no") or "no").lower() == "yes",
+                            "transform": t, "monitors": mons})
+        for d in conf.findall("disabled"):
+            for sp in d.findall("monitorspec"):
+                keys.add(spec_key(sp.findtext("connector"), sp.findtext("vendor"),
+                                  sp.findtext("product"), sp.findtext("serial")))
+        if logical:
+            out.append({"keys": keys, "logical": logical})
+    return out
+
+
+def restore():
+    if not os.path.isfile(SAVED):
+        return False
+    from gi.repository import GLib
+    proxy = bus_proxy()
+    serial, monitors, _logical, _props = proxy.call_sync("GetCurrentState", None, 0, 5000, None).unpack()
+    current = {}
+    for (connector, vendor, product, mserial), modes, _p in monitors:
+        current[spec_key(connector, vendor, product, mserial)] = modes
+    # match on the monitor identities (connector names can change between ports)
+    ident = lambda k: k[:3]  # noqa: E731
+    now = {ident(k): k for k in current}
+    for conf in saved_configs(SAVED):
+        if {ident(k) for k in conf["keys"]} != set(now):
+            continue
+        lms = []
+        for lm in conf["logical"]:
+            mons = []
+            for k, w, h, rate in lm["monitors"]:
+                real = now[ident(k)]
+                mode_id = None
+                for mid, mw, mh, mrate, *_ in current[real]:
+                    if mw == w and mh == h and abs(mrate - rate) < 0.05:
+                        mode_id = mid
+                        break
+                if mode_id is None:
+                    return False
+                mons.append((real[3], mode_id, {}))
+            lms.append((lm["x"], lm["y"], lm["scale"], lm["transform"], lm["primary"], mons))
+        args = GLib.Variant("(uua(iiduba(ssa{sv}))a{sv})", (serial, 2, lms, {}))   # 2 = keep (GNOME also writes monitors.xml)
+        proxy.call_sync("ApplyMonitorsConfig", args, 0, 10000, None)
+        return True
+    return False
+
+
+def save():
+    if os.path.isfile(LIVE) and os.path.isdir(SAVED_DIR):
+        shutil.copyfile(LIVE, SAVED + ".tmp")
+        os.replace(SAVED + ".tmp", SAVED)
+        return True
+    return False
+
+
+def watch():
+    restored = False
+    last = os.path.getmtime(LIVE) if os.path.isfile(LIVE) else 0
+    while True:
+        time.sleep(5)
+        persistent = os.path.ismount(SAVED_DIR)
+        if persistent and not restored:
+            restored = True
+            try:
+                restore()
+            except Exception as e:  # noqa: BLE001
+                print(f"askus-display-layout: could not restore: {e}", file=sys.stderr)
+            last = os.path.getmtime(LIVE) if os.path.isfile(LIVE) else 0
+            continue
+        m = os.path.getmtime(LIVE) if os.path.isfile(LIVE) else 0
+        if persistent and m and m != last:       # you changed the layout in Settings
+            last = m
+            try:
+                save()
+            except OSError as e:
+                print(f"askus-display-layout: could not save: {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "--watch"
+    if cmd == "--watch":
+        watch()
+    elif cmd == "restore":
+        sys.exit(0 if restore() else 1)
+    elif cmd == "save":
+        sys.exit(0 if save() else 1)
+    else:
+        sys.exit(__doc__)

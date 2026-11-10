@@ -1,0 +1,130 @@
+#!/bin/bash
+# ASKus OS: back up Persistent Storage to a second USB stick (like Tails' backup).
+#   askus-backup list               -> USB drives as JSON (never the ASKus stick)
+#   askus-backup run DISK           -> passphrase of the backup on stdin; copy Persistent Storage to it
+#   askus-backup restore DISK       -> passphrase on stdin; copy the backup INTO Persistent Storage
+#   askus-backup init DISK          -> only via askus-backup-init (admin password): ERASE DISK and
+#                                      make it an encrypted backup drive (passphrase on stdin)
+# The backup drive is encrypted (LUKS2, label ASKusBackup). It is only ever opened with
+# your passphrase; nothing is copied anywhere else.
+set -euo pipefail
+LABEL=ASKusBackup
+SRC=/run/askus/persistence
+MAP=askus-backup
+MNT=/run/askus/backup
+U=askus
+
+die() { echo "error: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "must run as root (pkexec)"
+
+boot_disk() {
+  local src
+  src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+  [ -n "$src" ] || src=$(blkid -t LABEL=ASKUS_OS -o device 2>/dev/null | grep -v '^/dev/sr' | head -n1 || true)
+  [ -n "$src" ] && lsblk -no PKNAME "$src" 2>/dev/null | head -n1
+}
+
+check_disk() {   # DISK must be a whole USB/removable disk and not the ASKus stick
+  local d=${1:-} name boot
+  [[ "$d" =~ ^/dev/[a-z0-9]+$ ]] || die "not a disk: $d"
+  [ -b "$d" ] || die "no such drive: $d"
+  name=${d#/dev/}
+  [ "$(lsblk -dno TYPE "$d")" = disk ] || die "$d is not a whole drive"
+  boot=$(boot_disk || true)
+  [ -n "$boot" ] && [ "$name" = "$boot" ] && die "that is the ASKus stick itself"
+  if [ "$(lsblk -dno TRAN "$d")" != usb ] && [ "$(lsblk -dno RM "$d" | tr -d ' ')" != 1 ]; then
+    die "only USB / removable drives can be used for backups"
+  fi
+}
+
+backup_part() {   # the LUKS partition labelled ASKusBackup on DISK
+  lsblk -lnpo NAME,TYPE "$1" | awk '$2=="part"{print $1}' | while read -r p; do
+    if [ "$(blkid -s TYPE -o value "$p" 2>/dev/null)" = crypto_LUKS ] &&
+       [ "$(blkid -s LABEL -o value "$p" 2>/dev/null)" = "$LABEL" ]; then echo "$p"; break; fi
+  done
+}
+
+read_pass() { IFS= read -r PASS || true; [ ${#PASS} -ge 8 ] || die "passphrase must be at least 8 characters"; }
+
+close_backup() {
+  umount "$MNT" 2>/dev/null || true
+  cryptsetup close "$MAP" 2>/dev/null || true
+}
+
+open_backup() {   # DISK
+  local part
+  part=$(backup_part "$1")
+  [ -n "$part" ] || die "this drive is not an ASKus backup drive yet"
+  close_backup
+  read_pass
+  printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" "$MAP" || die "wrong passphrase"
+  mkdir -p "$MNT"; chmod 700 "$MNT"
+  mount -o nosuid,nodev,noexec "/dev/mapper/$MAP" "$MNT"
+}
+
+cmd=${1:-}; shift || true
+case "$cmd" in
+  list)
+    boot=$(boot_disk || true)
+    python3 - "$boot" "$LABEL" <<'PY'
+import json, subprocess, sys
+boot, label = sys.argv[1], sys.argv[2]
+d = json.loads(subprocess.run(["lsblk", "-J", "-b", "-o", "NAME,TYPE,TRAN,RM,SIZE,MODEL,VENDOR,LABEL,FSTYPE"],
+                              capture_output=True, text=True).stdout)
+out = []
+for dev in d.get("blockdevices", []):
+    if dev.get("type") != "disk" or dev["name"] == boot:
+        continue
+    if dev.get("tran") != "usb" and not dev.get("rm"):
+        continue
+    if not dev.get("size"):
+        continue
+    parts = dev.get("children") or []
+    out.append({"disk": "/dev/" + dev["name"], "size": dev["size"],
+                "model": " ".join(x for x in ((dev.get("vendor") or "").strip(), (dev.get("model") or "").strip()) if x) or "USB drive",
+                "is_backup": any(p.get("fstype") == "crypto_LUKS" and p.get("label") == label for p in parts)})
+print(json.dumps(out))
+PY
+    ;;
+  run)
+    DISK=${1:-}; check_disk "$DISK"
+    mountpoint -q "$SRC" || die "unlock your Persistent Storage at startup first"
+    open_backup "$DISK"
+    trap close_backup EXIT
+    mkdir -p "$MNT/persistence"
+    rsync -aHAX --delete --exclude=/.askus-update/ --exclude=/lost+found/ "$SRC/" "$MNT/persistence/" ||
+      die "copying failed - the backup is incomplete, try again"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$MNT/last-backup"
+    sync
+    echo "done=$(cat "$MNT/last-backup")"
+    ;;
+  restore)
+    DISK=${1:-}; check_disk "$DISK"
+    mountpoint -q "$SRC" || die "create and unlock Persistent Storage on this stick first"
+    open_backup "$DISK"
+    trap close_backup EXIT
+    [ -d "$MNT/persistence" ] || die "this backup drive is empty"
+    rsync -aHAX "$MNT/persistence/" "$SRC/" || die "restoring failed"
+    sync
+    echo "restored=yes"
+    echo "Restart ASKus OS to use the restored data."
+    ;;
+  init)
+    [ "${ASKUS_BACKUP_INIT:-}" = 1 ] || die "use askus-backup-init (needs the administration password)"
+    DISK=${1:-}; check_disk "$DISK"
+    read_pass
+    close_backup
+    for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2); do umount "$p" 2>/dev/null || true; done
+    wipefs -aq "$DISK"
+    printf 'label: gpt\n,,L\n' | sfdisk -q "$DISK"
+    partprobe "$DISK" 2>/dev/null || true; udevadm settle
+    part=$(lsblk -lnpo NAME,TYPE "$DISK" | awk '$2=="part"{print $1; exit}')
+    [ -n "$part" ] || die "could not create the partition"
+    printf '%s' "$PASS" | cryptsetup luksFormat --batch-mode --type luks2 --label "$LABEL" --key-file=- "$part"
+    printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" "$MAP"
+    mkfs.ext4 -q -L ASKusBackupData "/dev/mapper/$MAP"
+    cryptsetup close "$MAP"
+    echo "ready=yes"
+    ;;
+  *) die "usage: askus-backup list | run DISK | restore DISK" ;;
+esac

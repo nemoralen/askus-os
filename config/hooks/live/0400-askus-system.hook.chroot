@@ -14,9 +14,16 @@ systemctl enable zramswap.service || true
 for u in avahi-daemon.service avahi-daemon.socket ModemManager.service unattended-upgrades.service \
          NetworkManager-wait-online.service systemd-timesyncd.service \
          apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer \
-         fstrim.timer cups.service cups-browsed.service ssh.service; do
+         fstrim.timer cups-browsed.service ssh.service; do
   systemctl mask "$u" 2>/dev/null || true
 done
+# Printing: USB printers only. CUPS listens on this computer only and never looks for
+# (or announces) printers on the network; the firewall blocks network printing anyway.
+if [ -f /etc/cups/cupsd.conf ]; then
+  sed -i -E 's/^Browsing .*/Browsing No/; s/^BrowseLocalProtocols .*/BrowseLocalProtocols none/' /etc/cups/cupsd.conf
+  grep -q '^Browsing ' /etc/cups/cupsd.conf || echo 'Browsing No' >> /etc/cups/cupsd.conf
+  sed -i -E 's/^Port 631/Listen localhost:631/' /etc/cups/cupsd.conf
+fi
 # File indexers (privacy + speed)
 for u in tracker-miner-fs-3.service tracker-extract-3.service tracker-miner-rss-3.service \
          localsearch-3.service localsearch-control-3.service localsearch-writeback-3.service; do

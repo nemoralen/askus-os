@@ -1,0 +1,6 @@
+{
+  "uuid": "askus-local-clock@askus",
+  "name": "ASKus Local Clock",
+  "description": "Shows your local time in the top bar while the system clock stays on UTC (so apps can't reveal your time zone). Choose the zone in 'Clock Time Zone'.",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}

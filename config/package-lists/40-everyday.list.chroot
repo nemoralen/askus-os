@@ -1,0 +1,46 @@
+# ---- Everyday tools ----
+# 1. Video & music (+ codecs, so MP4/MKV/MP3/AAC/H.264/HEVC play)
+celluloid
+rhythmbox
+gstreamer1.0-libav
+gstreamer1.0-plugins-good
+gstreamer1.0-plugins-bad
+gstreamer1.0-plugins-ugly
+gstreamer1.0-pipewire
+# 2. Printing & scanning (USB only: the firewall keeps network printers out)
+cups
+cups-client
+cups-filters
+ipp-usb
+printer-driver-gutenprint
+printer-driver-hpcups
+printer-driver-brlaser
+printer-driver-splix
+system-config-printer
+simple-scan
+sane-utils
+# 3. Surface / laptops: screen rotation, battery modes
+iio-sensor-proxy
+power-profiles-daemon
+# 4. Office: spell check, hyphenation, thesaurus, Microsoft-compatible fonts
+hunspell-en-us
+hyphen-en-us
+mythes-en-us
+fonts-crosextra-carlito
+fonts-crosextra-caladea
+fonts-liberation
+# 6. Archives (7-Zip, RAR)
+7zip
+unar
+zip
+unzip
+# 9. Small tools
+gnome-clocks
+gnome-calendar
+baobab
+gnome-characters
+gnome-font-viewer
+gtkhash
+collision
+# (Feather wallet is installed and signature-checked by hook 0470.)
+rsync

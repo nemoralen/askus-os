@@ -1,0 +1,116 @@
+#!/usr/bin/python3
+"""ASKus OS: choose the time zone of the top-bar clock.
+
+Only the clock in the top bar uses it. The system clock, Tor and every app stay on UTC,
+so websites and programs can't learn your time zone (like Tails).
+Saved in ~/.config/askus/clock-timezone (kept between restarts with Persistent Storage)."""
+import os
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
+
+CONF = os.path.expanduser("~/.config/askus/clock-timezone")
+DEFAULT = "/etc/askus/clock-timezone"
+TAB = "/usr/share/zoneinfo/zone1970.tab"
+
+
+def zones():
+    out = set()
+    try:
+        for line in open(TAB):
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) >= 3:
+                out.add(f[2])
+    except OSError:
+        pass
+    return sorted(out)
+
+
+def current():
+    for f in (CONF, DEFAULT):
+        try:
+            t = open(f).read().strip()
+            if t:
+                return t
+        except OSError:
+            pass
+    return "UTC"
+
+
+def now_in(zone):
+    try:
+        tz = GLib.TimeZone.new_identifier(zone) if zone != "UTC" else GLib.TimeZone.new_utc()
+        if tz is None:
+            return ""
+        return GLib.DateTime.new_now(tz).format("%a %-l:%M %p")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Clock Time Zone", default_width=460, default_height=620)
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        info = Gtk.Label(wrap=True, xalign=0,
+                         label="Choose the time shown in the top bar. Only that clock changes: "
+                               "the system, Tor and your apps stay on UTC, so websites can't see your time zone.")
+        info.add_css_class("dim-label")
+        box.append(info)
+        self.cur = Gtk.Label(xalign=0)
+        self.cur.add_css_class("heading")
+        box.append(self.cur)
+        self.search = Gtk.SearchEntry(placeholder_text="Search a city, e.g. New York, London, Sofia")
+        self.search.connect("search-changed", lambda *_: self.listbox.invalidate_filter())
+        box.append(self.search)
+        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.listbox.add_css_class("boxed-list")
+        self.listbox.set_filter_func(self.filter)
+        for z in ["UTC"] + zones():
+            row = Adw.ActionRow(title=("UTC (same as the system, like Tails)" if z == "UTC" else z.replace("_", " ")),
+                                activatable=True)
+            row.zone = z
+            row.connect("activated", self.pick)
+            self.listbox.append(row)
+        sw = Gtk.ScrolledWindow(vexpand=True)
+        sw.set_child(self.listbox)
+        box.append(sw)
+        view.set_content(box)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+        self.refresh()
+
+    def filter(self, row):
+        q = self.search.get_text().strip().lower().replace(" ", "_")
+        return not q or q in row.zone.lower()
+
+    def refresh(self):
+        z = current()
+        t = now_in(z)
+        self.cur.set_label(f"Top-bar clock: {z.replace('_', ' ')}" + (f"  ({t})" if t else ""))
+
+    def pick(self, row):
+        os.makedirs(os.path.dirname(CONF), mode=0o700, exist_ok=True)
+        with open(CONF, "w") as f:
+            f.write(row.zone + "\n")
+        self.refresh()
+        self.toasts.add_toast(Adw.Toast(title="Clock updated (within a few seconds)"))
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="org.askus.ClockZone")
+
+    def do_activate(self):
+        (self.props.active_window or Win(self)).present()
+
+
+if __name__ == "__main__":
+    App().run(None)

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus display layout
+Comment=Remember the monitor layout in Persistent Storage
+Exec=/usr/local/bin/askus-display-layout --watch
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

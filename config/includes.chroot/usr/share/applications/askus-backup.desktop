@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Back Up Persistent Storage
+Comment=Keep an encrypted copy of your Persistent Storage on a second USB stick
+Exec=/usr/local/bin/askus-backup-gui
+Icon=drive-removable-media
+Categories=Utility;Security;
+Keywords=backup;restore;persistent;copy;usb;

@@ -1,0 +1,7 @@
+#!/bin/bash
+# ASKus OS: prepare a USB drive as an encrypted backup drive. ERASES the drive.
+# Needs the administration password (polkit auth_admin_keep), so no app can wipe a
+# drive behind your back.   Usage: askus-backup-init DISK   (passphrase on stdin)
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "error: must run as root (pkexec)" >&2; exit 1; }
+ASKUS_BACKUP_INIT=1 exec /usr/local/sbin/askus-backup init "${1:-}"

@@ -84,6 +84,19 @@ At the boot menu you can press **e** (UEFI) or **Tab** (BIOS) and add `toram` to
 - **Screen Keyboard:** type with an on-screen keyboard, which helps against hardware keyloggers. It's also in the top-bar accessibility menu.
 - **Additional Software:** choose Debian programs once, and ASKus reinstalls them at every start from copies kept in Persistent Storage, offline and fast. Adding a program needs the administration password.
 
+## Everyday tools
+
+- **Video & music:** Celluloid (video) and Rhythmbox (music), with codecs for MP4, MKV, MP3, AAC, H.264 and HEVC.
+- **Printing & scanning:** USB printers and scanners (Settings › Printers, Document Scanner). CUPS only listens on this computer and never searches the network; the firewall blocks network printers anyway.
+- **Surface / laptops:** the screen turns with the tablet (lock it from the top-right menu), and battery modes (Power Saver / Balanced / Performance) are in the top-right menu.
+- **Office:** LibreOffice with English spell check, hyphenation and thesaurus, plus fonts that match Calibri/Cambria (Carlito/Caladea) and Arial/Times (Liberation), so Word and Excel files look right.
+- **Local time in the top bar:** only the clock shows your time zone (**Clock Time Zone** app, default New York). The system, Tor and every app stay on UTC, so websites can't learn your time zone.
+- **Archives:** 7-Zip and RAR (open and create .7z/.zip, open .rar) in Files › right-click.
+- **Back Up Persistent Storage:** keep an encrypted copy on a second USB stick, only the changes each time. Preparing a new backup drive erases it and needs the administration password; backing up and restoring need the backup's passphrase.
+- **Monitor layout is remembered:** arrange your screens once in Settings › Displays; it's restored after you unlock Persistent Storage.
+- **Small tools:** Clocks, Calendar, Disk Usage, Characters, Fonts, and a file checksum tool.
+- **Feather (Monero wallet):** the Tails/Whonix build, installed only if its signature from Feather's release key (`8185 E158 A333 30C7 FD61 BC0D 1F76 E155 CEFB A71C`) checks out. It connects through Tor. Wallets in `~/Monero` and its settings are kept in Persistent Storage.
+
 ## My Apps (your own apps, kept private)
 
 Copy an app's folder into **Persistent → My Apps** and it appears in the app grid within seconds. It works with web apps (a folder with `index.html`) and Python apps (a folder with a `.pyw` or `main.py`). Your apps stay in your encrypted storage and are **not** part of the public ASKus OS image.
