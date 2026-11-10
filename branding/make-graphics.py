@@ -54,8 +54,8 @@ scene=f'''<rect width="{W}" height="{H}" fill="url(#bgn)"/>
 {BEE("#22D3EE",3150,430,-16,1.6)}{BEE("#F472B6",560,1780,-24,0.75)}
 <rect width="{W}" height="{H}" fill="url(#scan)"/>'''
 hud='''<g font-family="DejaVu Sans Mono" fill="#67E8F9">
-<text x="140" y="150" font-size="34" letter-spacing="6" opacity="0.75">ASKUS//OS  SECURE_NODE</text><path d="M140 172H720" stroke="#22D3EE" stroke-opacity="0.5" stroke-width="3"/>
-<text x="3700" y="2040" font-size="30" text-anchor="end" opacity="0.6" fill="#F0ABFC">TOR:ON ◆ AMNESIC ◆ ENCRYPTED</text></g>
+<text x="440" y="150" font-size="34" letter-spacing="6" opacity="0.75">ASKUS//OS  SECURE_NODE</text><path d="M440 172H1020" stroke="#22D3EE" stroke-opacity="0.5" stroke-width="3"/>
+<text x="3400" y="2040" font-size="30" text-anchor="end" opacity="0.6" fill="#F0ABFC">TOR:ON ◆ AMNESIC ◆ ENCRYPTED</text></g>
 <circle cx="3155" cy="425" r="260" fill="none" stroke="#22D3EE" stroke-opacity="0.35" stroke-width="3" stroke-dasharray="10 16"/>'''
 open("wallpaper.svg","w").write(f'<svg {NS} viewBox="0 0 {W} {H}" width="{W}" height="{H}"><defs>{SCENE_DEFS}</defs>{scene}{hud}</svg>')
 open("boot-splash.svg","w").write(f'''<svg {NS} viewBox="0 0 {W} {H}" width="{W}" height="{H}"><defs>{SCENE_DEFS}{GR}</defs>{scene}
