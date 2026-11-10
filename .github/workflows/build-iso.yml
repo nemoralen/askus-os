@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: askus-build
+  group: askus-build-${{ github.ref }}   # test builds of other branches never queue behind (or cancel) main's
   cancel-in-progress: false
 
 env:
@@ -29,7 +29,9 @@ jobs:
       id: ${{ steps.ver.outputs.id }}
       tag: ${{ steps.ver.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Version for this build
         id: ver
@@ -40,6 +42,8 @@ jobs:
           echo "Building ASKus OS v1.0-$ID"
 
       - name: Check scripts (syntax)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"   # no __pycache__ inside includes.chroot (it would ship in the image)
         run: |
           set -e
           for f in build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/*; do bash -n "$f"; done
@@ -59,7 +63,7 @@ jobs:
           docker run --rm --privileged -v "$PWD":/work -w /work \
             -e ASKUS_BUILD_ID="${{ steps.ver.outputs.id }}" \
             -e ASKUS_UPDATE_REPO="${{ github.repository }}" \
-            debian:trixie \
+            debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
             bash -c "chmod +x build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/* config/includes.chroot/usr/local/bin/* config/includes.chroot/usr/local/sbin/* && apt-get update && apt-get install -y --no-install-recommends ca-certificates && ./build.sh"
 
       - name: Prepare release files
@@ -83,7 +87,7 @@ jobs:
           ls -la
 
       - name: Upload ISO as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: askus-os-iso
           path: out/*
@@ -92,6 +96,7 @@ jobs:
 
   release:
     needs: build
+    if: github.ref == 'refs/heads/main'   # test builds on other branches never reach the key
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: release        # protected: main only + owner approval; holds ASKUS_SIGNING_KEY
@@ -99,10 +104,12 @@ jobs:
       contents: write           # publish the release
       actions: write            # keep the daily schedule enabled
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Get the built ISO
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: askus-os-iso
           path: out
@@ -111,13 +118,22 @@ jobs:
         # Installed ASKus systems refuse any update whose SHA256SUMS is not signed with this key.
         env:
           ASKUS_SIGNING_KEY: ${{ secrets.ASKUS_SIGNING_KEY }}
+          BUILD_ID: ${{ needs.build.outputs.id }}
         run: |
           SIGNERS=config/includes.chroot/etc/askus/release-signers
           if [ ! -s "$SIGNERS" ]; then
-            # Signing not set up yet: this image has no release key built in, so its updater
-            # accepts checksum-only updates (as before). Once the key is added, signing is required.
-            echo "::warning::Release key not set up yet ($SIGNERS missing) - publishing WITHOUT a signature."
-            exit 0
+            echo "::error::$SIGNERS is missing. Not publishing an unsigned release."
+            exit 1
+          fi
+          # Sign only what will really be published: SHA256SUMS must list exactly this build's
+          # image (the in-OS updater reads the version from that signed name) and match its bytes.
+          NAME="askus-os-$BUILD_ID.iso"
+          if [ "$(wc -l < out/SHA256SUMS)" != 1 ] || [ "$(awk '{print $2}' out/SHA256SUMS)" != "$NAME" ]; then
+            echo "::error::SHA256SUMS does not list exactly $NAME"; exit 1
+          fi
+          if [ -f "out/$NAME" ]; then GOT=$(sha256sum < "out/$NAME"); else GOT=$(cat "out/$NAME".part* | sha256sum); fi
+          if [ "${GOT%% *}" != "$(awk '{print $1}' out/SHA256SUMS)" ]; then
+            echo "::error::SHA256SUMS does not match the image that would be published"; exit 1
           fi
           if [ -z "$ASKUS_SIGNING_KEY" ]; then
             echo "::error::$SIGNERS exists but the secret ASKUS_SIGNING_KEY is missing. Not publishing an unsigned release."
@@ -136,22 +152,22 @@ jobs:
           ls -la out
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.build.outputs.tag }}
-          name: ASKus OS ${{ needs.build.outputs.tag }}
-          make_latest: true
-          files: |
-            out/*.iso*
-            out/SHA256SUMS
-            out/SHA256SUMS.sig
-          fail_on_unmatched_files: false
-          body: |
-            **ASKus OS ${{ needs.build.outputs.tag }}**, a daily build with the latest Debian security updates and Tor Browser. Signed with the ASKus release key (`SHA256SUMS.sig`).
+        # Plain `gh` (preinstalled on the runner) instead of a third-party action: nothing
+        # outside GitHub's own code runs with permission to publish releases.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          cat > notes.md <<EOF
+          **ASKus OS $TAG**, a daily build with the latest Debian security updates and Tor Browser. Signed with the ASKus release key (\`SHA256SUMS.sig\`).
 
-            **Already running ASKus OS?** It finds this update by itself and downloads only what changed (usually a small part of the image). Click **Update now** in the notification, or open **ASKus Update**.
+          **Already running ASKus OS?** It finds this update by itself and downloads only what changed (usually a small part of the image). Click **Update now** in the notification, or open **ASKus Update**.
 
-            **New install:** download the `.iso` (if it's split into `.part00`/`.part01`, join them: Windows `copy /b file.part00 + file.part01 file.iso`, Mac/Linux `cat file.part* > file.iso`), check it against `SHA256SUMS`, then flash it to a USB stick with balenaEtcher.
+          **New install:** download the \`.iso\` (if it's split into \`.part00\`/\`.part01\`, join them: Windows \`copy /b file.part00 + file.part01 file.iso\`, Mac/Linux \`cat file.part* > file.iso\`), check it against \`SHA256SUMS\`, then flash it to a USB stick with balenaEtcher.
+          EOF
+          gh release create "$TAG" out/*.iso* out/SHA256SUMS out/SHA256SUMS.sig \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "ASKus OS $TAG" --notes-file notes.md --latest
 
       - name: Keep this build's update index permanently
         # Tiny file (~1 MB). Lets a stick of ANY older version still do a fast update,
