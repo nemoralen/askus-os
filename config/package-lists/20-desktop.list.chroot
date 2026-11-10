@@ -6,6 +6,7 @@ gnome-shell-extensions
 gnome-shell-extension-prefs
 gnome-shell-extension-dashtodock
 gnome-shell-extension-appindicator
+gnome-shell-extension-tiling-assistant
 gnome-control-center
 gnome-settings-daemon
 gnome-terminal
