@@ -50,7 +50,7 @@ natural-scroll=true
 two-finger-scrolling-enabled=true
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com', 'askus-tooltips@askus', 'askus-local-clock@askus', 'clipboard-indicator@tudmotu.com']
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'ubuntu-appindicators@ubuntu.com', 'blur-my-shell@aunetx', 'ding@rastersoft.com', 'askus-tooltips@askus', 'askus-local-clock@askus', 'clipboard-indicator@tudmotu.com', 'askus-gestures@askus', 'tiling-assistant@leleat-on-github']
 favorite-apps=['askus-tor-browser.desktop', 'askus-everyday-browser.desktop', 'askus-assistant.desktop', 'org.gnome.Nautilus.desktop', 'electrum.desktop', 'org.keepassxc.KeePassXC.desktop', 'org.kde.kleopatra.desktop', 'org.mozilla.Thunderbird.desktop', 'thunderbird.desktop', 'askus-tor-status.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop']
 welcome-dialog-last-shown-version='999'
 disable-user-extensions=false
@@ -181,3 +181,8 @@ clear-history-on-interval=true
 clear-history-interval=60
 notify-on-copy=false
 excluded-apps=['KeePassXC', 'org.keepassxc.KeePassXC', 'keepassxc', 'Electrum', 'electrum', 'feather', 'Feather', 'org.kde.kleopatra', 'kleopatra', 'Kleopatra']
+
+# Windows 11-style snapping (Tiling Assistant): drag a window to an edge or corner, or Super+arrows.
+# After snapping one window, a picker offers the other open windows to fill the rest (Snap Assist).
+[org/gnome/shell/extensions/tiling-assistant]
+enable-tiling-popup=true
