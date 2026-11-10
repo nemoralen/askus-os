@@ -32,7 +32,8 @@ for f in "$B"/boot/grub/*.cfg; do
   OPTS=$(awk '$1=="linux" && /boot=live/ && !/failsafe|noapic/ {$1="";$2=""; sub(/^ +/,""); print; exit}' "$f")
   [ -n "$OPTS" ] && break
 done
-[ -n "$OPTS" ] || OPTS="boot=live components quiet splash username=askus hostname=localhost"
+# Never fall back to made-up options: they would lack the privilege and hardening settings.
+[ -n "$OPTS" ] || { echo "[askus] surface-boot: kernel options of the normal entry not found - skipping menu entry"; exit 0; }
 
 cat >> "$CFG" <<EOF
 

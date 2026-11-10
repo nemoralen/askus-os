@@ -504,17 +504,25 @@ class Welcome(Adw.ApplicationWindow):
 
     # ---------- closing ----------
     def finish_and_close(self):
-        self.finish_sync()
-        self.close()
+        if self.finish_sync():
+            self.close()
 
     def finish_sync(self):
+        """Lock the startup settings. Returns False (and keeps the window open) if that
+        failed: while the Welcome counts as open, any app could change them."""
+        if self.finished:
+            return True
+        try:
+            r = subprocess.run(["pkexec", PERSIST, "finish"], capture_output=True, timeout=30)
+            self.finished = r.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            self.finished = False
         if not self.finished:
-            self.finished = True
-            subprocess.run(["pkexec", PERSIST, "finish"], capture_output=True, timeout=30)
+            self.toast("Couldn't lock the startup settings - please try again")
+        return self.finished
 
     def on_close_request(self, *_):
-        self.finish_sync()
-        return False
+        return not self.finish_sync()   # True keeps the window open
 
 
 class App(Adw.Application):

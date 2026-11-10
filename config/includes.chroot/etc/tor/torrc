@@ -15,9 +15,15 @@ AutomapHostsOnResolve 1
 AutomapHostsSuffixes .onion,.exit
 VirtualAddrNetworkIPv4 10.192.0.0/10
 
-# Root-only control port (used by `sudo nyx`)
+# Control port for root only (used by `sudo nyx`). Anyone who can use it can reconfigure
+# Tor, e.g. send all traffic through a proxy that sees the real IP address. So: the live
+# user is not in group debian-tor (auto/config), the cookie is not group-readable,
+# Debian's group-writable control socket is turned off, and the firewall only lets root
+# connect to 9051.
 ControlPort 127.0.0.1:9051
 CookieAuthentication 1
+CookieAuthFileGroupReadable 0
+ControlSocket 0
 
 ClientUseIPv6 0
 %include /etc/tor/torrc.d/*.conf
