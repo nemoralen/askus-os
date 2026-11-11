@@ -37,6 +37,7 @@ dconf update
 
 # ---- permissions on our helpers ----
 chmod 0755 /usr/local/bin/askus-* /usr/local/sbin/askus-*
+chmod 0755 /usr/local/lib/askus/myapps-bin/* 2>/dev/null || true
 chmod 0700 /etc/skel/.electrum 2>/dev/null || true
 chmod 0755 /etc/tor/torrc.d
 
