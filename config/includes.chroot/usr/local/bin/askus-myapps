@@ -28,7 +28,7 @@ PREFIX = "askus-myapp-"
 README = """Put your own apps here - one folder per app.
 
 ASKus OS adds them to the app grid automatically:
-  - a folder with index.html      -> opens as a web app (Redline Desk...)
+  - a folder with index.html      -> opens in its own app window (Redline Desk...)
   - a folder with a .pyw / main.py -> runs as a Python app (Smart PDF Maker...)
 
 They run in a sandbox with NO network and no access to your wallet, keys,
@@ -102,16 +102,16 @@ def scan():
             if not app:
                 continue
             fn = PREFIX + slug(d) + ".desktop"
-            kind = "Web app" if app["run"].lower().endswith((".html", ".htm")) else "Python app"
+            kind = "App" if app["run"].lower().endswith((".html", ".htm")) else "Python app"
             wanted[fn] = (
                 "[Desktop Entry]\nType=Application\n"
                 f"Name={app['name']}\n"
                 f"Comment=My App ({kind}) - runs sandboxed"
                 + (" with no network" if app["network"] != "yes" else ", network through Tor") + "\n"
-                f'Exec=/usr/local/bin/askus-myapp-run "{esc(d)}"\n'
+                f'Exec=/usr/local/bin/askus-myapp-run --id {PREFIX}{slug(d)} "{esc(d)}"\n'
                 f"Icon={app['icon'] or 'application-x-executable'}\n"
                 "Categories=Office;X-ASKus-MyApps;\nStartupNotify=true\n"
-                f"StartupWMClass=askus-myapp-{slug(d)}\n"
+                f"StartupWMClass={PREFIX}{slug(d)}\n"
             )
     changed = False
     for f in os.listdir(OUT):
