@@ -11,6 +11,14 @@ if ! command -v brave-browser >/dev/null 2>&1; then
   exit 1
 fi
 
+# Once per session: what this browser is (and isn't) for.
+NOTE="${XDG_RUNTIME_DIR:-/tmp}/askus-everyday-browser-noted"
+if [ ! -e "$NOTE" ]; then
+  zenity --info --title="Everyday Browser" --width=420 \
+    --text="The Everyday Browser is for normal websites where you log in as yourself (email, banking, shopping).\n\nIts traffic goes through Tor, but Brave is <b>not</b> built for anonymity: websites can recognise it.\n\nFor anything anonymous, and for every <b>.onion</b> site, use <b>Tor Browser</b>." || true
+  touch "$NOTE"
+fi
+
 if [ "$MODE" = keep ]; then
   if mountpoint -q "$HOME/Persistent"; then
     DIR="$HOME/Persistent/.everyday-browser"
