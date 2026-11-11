@@ -97,12 +97,14 @@ unlock() {
     dev=$loop
   fi
   name="$PREFIX$(date +%s%N | tail -c 7)"
-  if ! printf '%s' "$PW" | cryptsetup open "${opts[@]}" "$dev" "$name" 2>/tmp/askus-vc.err; then
+  local err; err=$(mktemp)   # private file (a fixed name in /tmp could be a planted symlink)
+  if ! printf '%s' "$PW" | cryptsetup open "${opts[@]}" "$dev" "$name" 2>"$err"; then
     [ -n "$loop" ] && losetup -d "$loop" || true
-    grep -qi "no key available\|wrong" /tmp/askus-vc.err && die "wrong password, PIM or keyfile (or try the hidden / system volume option)"
-    die "could not open the volume: $(tail -n1 /tmp/askus-vc.err)"
+    grep -qi "no key available\|wrong" "$err" && { rm -f "$err"; die "wrong password, PIM or keyfile (or try the hidden / system volume option)"; }
+    local msg; msg=$(tail -n1 "$err"); rm -f "$err"
+    die "could not open the volume: $msg"
   fi
-  rm -f /tmp/askus-vc.err
+  rm -f "$err"
   mkdir -p /run/askus/veracrypt
   echo "$target" > "/run/askus/veracrypt/$name.src"
   [ -n "$loop" ] && echo "$loop" > "/run/askus/veracrypt/$name.loop"
