@@ -1,21 +1,28 @@
 #!/bin/bash
-# Run one of "My Apps" (~/Persistent/My Apps/<app>) in a sandbox.
-#   * NO network by default (the app can't send anything anywhere; web fonts etc. are skipped)
+# Run one of "My Apps" (~/Persistent/My Apps/<app>) in its own native window (askus-appwindow).
+#   askus-myapp-run [--id WINDOW-ID] "<app folder>"
+#   * NO internet by default: the app window can only load files and pages on this computer
+#     (web fonts etc. are skipped). Network=yes in askus-app.ini lifts this (still only via Tor).
 #   * can't see your wallet, GnuPG/SSH keys, KeePassXC, Thunderbird, Tor Browser or Tor itself
-#   * web apps open in their own app window (Brave engine); Python apps get the same window
+#     when the firejail sandbox is installed
+#   * settings the app keeps are stored in "<app folder>/.appdata" (Persistent Storage)
+ID=""
+if [ "${1:-}" = "--id" ]; then ID=$2; shift 2; fi
 DIR=$1
 [ -d "$DIR" ] || { zenity --error --text="App folder not found:\n$DIR"; exit 1; }
 DIR=$(readlink -f "$DIR")
 NAME=$(basename "$DIR")
 SLUG=$(echo "$NAME" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
-STATE="$HOME/.local/share/askus-myapps/$SLUG"
-mkdir -p "$STATE"
+[ -n "$ID" ] || ID="askus-myapp-$SLUG"
+LOG="$HOME/.local/share/askus-myapps/$SLUG.log"
+mkdir -p "$(dirname "$LOG")"
 
-# entry point + network setting (same rules as askus-myapps)
-RUN=""; NET=no
+# entry point, title, icon, network setting (same rules as askus-myapps)
+RUN=""; NET=no; TITLE="$NAME"; ICON=""
 if [ -f "$DIR/askus-app.ini" ]; then
-  RUN=$(sed -n 's/^[[:space:]]*Run[[:space:]]*=[[:space:]]*//p' "$DIR/askus-app.ini" | head -n1 | tr -d '\r')
-  NET=$(sed -n 's/^[[:space:]]*Network[[:space:]]*=[[:space:]]*//p' "$DIR/askus-app.ini" | head -n1 | tr -d '\r' | tr 'A-Z' 'a-z')
+  ini() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$DIR/askus-app.ini" | head -n1 | tr -d '\r'; }
+  RUN=$(ini Run); NET=$(ini Network | tr 'A-Z' 'a-z'); T=$(ini Name); [ -n "$T" ] && TITLE=$T
+  ICON=$(ini Icon); [ -n "$ICON" ] && ICON="$DIR/$ICON"
 fi
 if [ -z "$RUN" ]; then
   RUN=$(cd "$DIR" && ls -1 *.pyw 2>/dev/null | head -n1)
@@ -24,15 +31,14 @@ if [ -z "$RUN" ]; then
 fi
 [ -n "$RUN" ] && [ -f "$DIR/$RUN" ] || { zenity --error --text="Don't know how to start $NAME\n(no index.html or .pyw found)"; exit 1; }
 
-BROWSER_BIN=$(command -v brave-browser || command -v chromium || command -v brave || true)
-WIN=(--class="askus-myapp-$SLUG" --user-data-dir="$STATE/window" --no-first-run --no-default-browser-check
-     --disable-sync --disable-background-networking --window-size=1280,860)
+WINDOW=(/usr/local/bin/askus-appwindow --id "$ID" --title "$TITLE" --data "$DIR/.appdata")
+[ -n "$ICON" ] && WINDOW+=(--icon "$ICON")
 
 # Python apps import pymupdf; older Debian builds call it "fitz" - provide the new name if needed
 PYPATH="$DIR"
 python3 -c 'import pymupdf' 2>/dev/null || { python3 -c 'import fitz' 2>/dev/null && PYPATH="$DIR:/usr/local/lib/askus/pyshim"; }
 
-JAIL=(firejail --quiet --noprofile --name="myapp-$SLUG" --caps.drop=all --seccomp --nonewprivs --nogroups
+JAIL=(firejail --quiet --noprofile --name="myapp-$SLUG" --caps.drop=all --nonewprivs --nogroups
       --blacklist="$HOME/.gnupg" --blacklist="$HOME/.ssh" --blacklist="$HOME/.electrum"
       --blacklist="$HOME/.config/keepassxc" --blacklist="$HOME/.thunderbird" --blacklist="$HOME/.tor-browser"
       --blacklist="$HOME/Persistent/.everyday-browser" --blacklist="$HOME/Persistent/.askus-assistant"
@@ -41,18 +47,29 @@ JAIL=(firejail --quiet --noprofile --name="myapp-$SLUG" --caps.drop=all --seccom
 [ "$NET" = yes ] || JAIL+=(--net=none)
 command -v firejail >/dev/null 2>&1 || JAIL=()
 
+run() {
+  # If the app fails to start, show why instead of doing nothing.
+  local t0=$SECONDS
+  "${JAIL[@]}" "$@" >"$LOG" 2>&1
+  local rc=$?
+  if [ $rc -ne 0 ] && [ $((SECONDS - t0)) -lt 15 ]; then
+    zenity --error --width=520 --title="$TITLE" \
+      --text="$TITLE could not start.\n\n$(tail -n 8 "$LOG" | sed 's/&/\&amp;/g;s/</\&lt;/g')"
+  fi
+  return $rc
+}
+
 case "$RUN" in
   *.html|*.htm)
-    [ -n "$BROWSER_BIN" ] || { xdg-open "$DIR/$RUN"; exit 0; }
     URI=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$DIR/$RUN")
-    exec "${JAIL[@]}" "$BROWSER_BIN" "${WIN[@]}" --allow-file-access-from-files --app="$URI"
+    run "${WINDOW[@]}" "$URI"
     ;;
   *)
     cd "$DIR" || exit 1
-    if [ -n "$BROWSER_BIN" ]; then
-      # Python apps that open their window with Python's webbrowser module get an app window
-      export BROWSER="$BROWSER_BIN ${WIN[*]} --app=%s"
-    fi
-    exec "${JAIL[@]}" env PYTHONPATH="$PYPATH" python3 "$DIR/$RUN"
+    # The app opens its window with Python's webbrowser module: give it the app window.
+    # "explorer /select, FILE" (Windows) is mapped to showing the file in Files.
+    BROWSER="${WINDOW[*]@Q} %s"
+    run env PYTHONPATH="$PYPATH" PATH="/usr/local/lib/askus/myapps-bin:$PATH" BROWSER="$BROWSER" \
+      python3 "$DIR/$RUN"
     ;;
 esac
