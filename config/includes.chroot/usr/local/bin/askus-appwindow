@@ -19,6 +19,22 @@ from urllib.parse import unquote, urlparse
 
 import gi
 
+
+def webkit_sandbox_works():
+    """WebKit runs web pages in its own bubblewrap sandbox. Inside firejail (how My Apps are
+    started) bubblewrap usually can't create its namespaces; then firejail is the sandbox."""
+    if os.environ.get("container") != "firejail":
+        return True
+    try:
+        return subprocess.run(["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-user", "true"],
+                              capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+if not webkit_sandbox_works():
+    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("WebKit", "6.0")
 from gi.repository import Gio, GLib, Gtk, WebKit  # noqa: E402
