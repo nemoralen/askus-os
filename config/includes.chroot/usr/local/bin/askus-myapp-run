@@ -38,7 +38,7 @@ WINDOW=(/usr/local/bin/askus-appwindow --id "$ID" --title "$TITLE" --data "$DIR/
 PYPATH="$DIR"
 python3 -c 'import pymupdf' 2>/dev/null || { python3 -c 'import fitz' 2>/dev/null && PYPATH="$DIR:/usr/local/lib/askus/pyshim"; }
 
-JAIL=(firejail --quiet --noprofile --name="myapp-$SLUG" --caps.drop=all --nonewprivs --nogroups
+JAIL=(firejail --quiet --noprofile --name="myapp-$SLUG" --caps.drop=all --nonewprivs --nogroups --seccomp
       --blacklist="$HOME/.gnupg" --blacklist="$HOME/.ssh" --blacklist="$HOME/.electrum"
       --blacklist="$HOME/.config/keepassxc" --blacklist="$HOME/.thunderbird" --blacklist="$HOME/.tor-browser"
       --blacklist="$HOME/Persistent/.everyday-browser" --blacklist="$HOME/Persistent/.askus-assistant"
