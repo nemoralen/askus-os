@@ -32,6 +32,29 @@ done
 rm -f /etc/xdg/autostart/tracker-*.desktop /etc/xdg/autostart/localsearch-*.desktop \
       /etc/xdg/autostart/org.gnome.Software.desktop /etc/xdg/autostart/geoclue-demo-agent.desktop
 
+# ---- Thunderbird privacy defaults (like Tails) ----
+for d in /usr/lib/thunderbird/defaults/pref /usr/lib/thunderbird/browser/defaults/preferences; do
+  [ -d "$d" ] || continue
+  cat > "$d/askus.js" <<'TBPREF'
+// ASKus OS: Thunderbird privacy defaults. All its traffic already goes through Tor.
+pref("mailnews.headers.sendUserAgent", false);              // don't name the OS/app in every email
+pref("mail.smtpserver.default.hello_argument", "[127.0.0.1]");  // no host name in the SMTP greeting
+pref("mailnews.message_display.disable_remote_image", true); // remote images = "you opened this" beacons
+pref("javascript.enabled", false);
+pref("network.cookie.cookieBehavior", 2);
+pref("mailnews.reply_header_type", 1);                       // "X wrote:" (no date/time zone)
+pref("mailnews.auto_config.fetchFromISP.sslOnly", true);
+pref("mailnews.auto_config.guess.sslOnly", true);
+pref("mail.provider.enabled", false);
+pref("mail.shell.checkDefaultClient", false);
+pref("toolkit.telemetry.enabled", false);
+pref("datareporting.healthreport.uploadEnabled", false);
+pref("datareporting.policy.dataSubmissionEnabled", false);
+pref("app.update.enabled", false);
+TBPREF
+  break
+done
+
 # ---- GNOME defaults ----
 dconf update
 
