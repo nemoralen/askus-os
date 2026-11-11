@@ -1,0 +1,7 @@
+#!/bin/bash
+# For "My Apps" written for Windows: "explorer /select, FILE" shows FILE in Files;
+# "explorer FOLDER-or-FILE" opens it.
+if [ "${1:-}" = "/select," ] || [ "${1:-}" = "/select" ]; then
+  exec nautilus --select "$2"
+fi
+exec xdg-open "${1:-$HOME}"
