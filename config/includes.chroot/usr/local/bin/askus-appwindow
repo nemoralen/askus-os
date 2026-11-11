@@ -1,0 +1,174 @@
+#!/usr/bin/python3
+"""ASKus OS app window: shows one of "My Apps" in its own native window (no browser).
+
+  askus-appwindow --id ID --title TITLE [--icon PNG] [--data DIR] URL
+
+* Uses the system's WebKitGTK engine, whose page process runs in its own bubblewrap sandbox.
+* Offline: every connection except to this computer (file:// pages, 127.0.0.1) is sent to
+  a dead proxy, so the app can't reach the internet - not even through Tor.
+* Links to other websites are not opened. Files the app wants to save get a normal Save
+  dialog. Settings the app keeps (localStorage) are stored in --data (in the app's own
+  folder in Persistent Storage, so they survive a restart).
+* If URL is a file that isn't a web page (e.g. a finished PDF), it opens in its normal app.
+"""
+import argparse
+import os
+import subprocess
+import sys
+from urllib.parse import unquote, urlparse
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Gio, GLib, Gtk, WebKit  # noqa: E402
+
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def is_local(uri):
+    u = urlparse(uri)
+    if u.scheme in ("file", "blob", "data", "about"):
+        return True
+    return u.scheme in ("http", "https") and (u.hostname or "") in LOCAL_HOSTS
+
+
+def is_page(uri):
+    u = urlparse(uri)
+    if u.scheme in ("http", "https"):
+        return True
+    return u.scheme == "file" and unquote(u.path).lower().endswith((".html", ".htm"))
+
+
+def open_outside(uri):
+    """Hand a non-page local file (PDF, folder...) to its normal app."""
+    u = urlparse(uri)
+    if u.scheme == "file":
+        subprocess.Popen(["xdg-open", unquote(u.path)])
+
+
+class AppWindow(Gtk.Application):
+    def __init__(self, a):
+        super().__init__(flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.a = a
+        self.to_open = set()
+
+    def do_activate(self):
+        a = self.a
+        data = a.data or os.path.join(GLib.get_user_data_dir(), "askus-appwindow", a.id)
+        os.makedirs(data, mode=0o700, exist_ok=True)
+        session = WebKit.NetworkSession.new(os.path.join(data, "data"), os.path.join(data, "cache"))
+        # Offline: everything except this computer goes to a proxy that doesn't exist.
+        proxy = WebKit.NetworkProxySettings.new("http://127.0.0.1:9", list(LOCAL_HOSTS))
+        session.set_proxy_settings(WebKit.NetworkProxyMode.CUSTOM, proxy)
+        session.connect("download-started", self.on_download)
+
+        view = WebKit.WebView(network_session=session)
+        s = view.get_settings()
+        s.set_allow_file_access_from_file_urls(True)        # the app's own files (pdf.js worker...)
+        s.set_allow_universal_access_from_file_urls(False)
+        s.set_enable_developer_extras(False)
+        s.set_javascript_can_open_windows_automatically(False)
+        s.set_enable_back_forward_navigation_gestures(False)
+        view.connect("decide-policy", self.on_policy)
+        view.connect("create", self.on_create)
+        view.connect("notify::title", lambda v, _p: self.win.set_title(v.get_title() or a.title))
+
+        self.win = Gtk.ApplicationWindow(application=self, title=a.title)
+        self.win.set_default_size(1280, 860)
+        if a.icon and os.path.isfile(a.icon):
+            # GNOME shows the icon from the app's .desktop entry; this covers other cases
+            theme = Gtk.IconTheme.get_for_display(self.win.get_display())
+            theme.add_search_path(os.path.dirname(a.icon))
+            self.win.set_icon_name(os.path.splitext(os.path.basename(a.icon))[0])
+        self.win.set_child(view)
+        self.win.present()
+        self.view = view
+        view.load_uri(a.url)
+
+    def on_policy(self, _view, decision, kind):
+        if kind in (WebKit.PolicyDecisionType.NAVIGATION_ACTION, WebKit.PolicyDecisionType.NEW_WINDOW_ACTION):
+            uri = decision.get_navigation_action().get_request().get_uri()
+            if not is_local(uri):
+                decision.ignore()            # stays offline; external links are not opened
+                return True
+            if kind == WebKit.PolicyDecisionType.NEW_WINDOW_ACTION:
+                decision.ignore()
+                if is_page(uri):
+                    self.view.load_uri(uri)
+                else:
+                    open_outside(uri)
+                return True
+        elif kind == WebKit.PolicyDecisionType.RESPONSE:
+            if not decision.is_mime_type_supported():
+                decision.download()          # e.g. a PDF: offer to save it
+                return True
+        return False
+
+    def on_create(self, _view, action):
+        uri = action.get_request().get_uri()
+        if is_local(uri):
+            if is_page(uri):
+                self.view.load_uri(uri)
+            elif uri.startswith("blob:"):
+                # e.g. "Print": the app made a PDF in memory - open it in the PDF viewer
+                self.to_open.add(uri)
+                self.view.download_uri(uri)
+            else:
+                open_outside(uri)
+        return None                          # never open extra windows
+
+    def on_download(self, _session, download):
+        download.connect("decide-destination", self.on_destination)
+
+    def on_destination(self, download, suggested):
+        uri = download.get_request().get_uri()
+        if uri in self.to_open:              # open, don't ask where to save
+            self.to_open.discard(uri)
+            tmp = os.path.join(GLib.get_user_runtime_dir(), "askus-appwindow")
+            os.makedirs(tmp, mode=0o700, exist_ok=True)
+            path = os.path.join(tmp, suggested or "document.pdf")
+            download.set_allow_overwrite(True)
+            download.set_destination(path)
+            download.connect("finished", lambda _d: subprocess.Popen(["xdg-open", path]))
+            return True
+        return self.ask_destination(download, suggested)
+
+    def ask_destination(self, download, suggested):
+        dialog = Gtk.FileDialog(title="Save", initial_name=suggested or "download")
+        docs = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir()
+        dialog.set_initial_folder(Gio.File.new_for_path(docs))
+
+        def done(dlg, res):
+            try:
+                f = dlg.save_finish(res)
+            except GLib.Error:
+                download.cancel()
+                return
+            download.set_allow_overwrite(True)   # the Save dialog already asked about replacing
+            download.set_destination(f.get_path())
+
+        dialog.save(self.win, None, done)
+        return True
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--id", required=True)
+    p.add_argument("--title", default="App")
+    p.add_argument("--icon")
+    p.add_argument("--data")
+    p.add_argument("url")
+    a = p.parse_args()
+    if not is_local(a.url):
+        sys.exit("askus-appwindow only opens files and pages on this computer")
+    if not is_page(a.url):
+        open_outside(a.url)
+        return 0
+    GLib.set_prgname(a.id)                   # window <-> app grid icon (StartupWMClass)
+    GLib.set_application_name(a.title)
+    return AppWindow(a).run([sys.argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
