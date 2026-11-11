@@ -62,6 +62,9 @@ python3-stem
 # For "My Apps" (e.g. Smart PDF Maker): PDF library for Python
 python3-fitz
 python3-pymupdf
+# native windows for "My Apps" (askus-appwindow)
+gir1.2-webkit-6.0
+bubblewrap
 # ---- Office (like Tails): opens the Word/Excel/PowerPoint "New Document" templates
 libreoffice-writer
 libreoffice-calc

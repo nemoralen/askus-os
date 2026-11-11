@@ -104,7 +104,9 @@ PY
     open_backup "$DISK"
     trap close_backup EXIT
     [ -d "$MNT/persistence" ] || die "this backup drive is empty"
-    rsync -aHAX "$MNT/persistence/" "$SRC/" || die "restoring failed"
+    # A backup drive is outside data: restore files and folders only - no set-user-ID or
+    # set-group-ID programs, no device files or sockets (they could be used to get root).
+    rsync -aHAX --no-devices --no-specials --chmod=ug-s "$MNT/persistence/" "$SRC/" || die "restoring failed"
     sync
     echo "restored=yes"
     echo "Restart ASKus OS to use the restored data."

@@ -1,0 +1,6 @@
+{
+  "uuid": "askus-dock-move@askus",
+  "name": "ASKus Dock Move",
+  "description": "Press and hold an empty spot on the dock, then drag it to the top, left, right or bottom of the screen.",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}

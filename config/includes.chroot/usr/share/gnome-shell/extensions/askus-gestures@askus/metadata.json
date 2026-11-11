@@ -1,6 +1,12 @@
 {
   "uuid": "askus-gestures@askus",
   "name": "ASKus Gestures",
-  "description": "Four-finger swipe down minimizes the window you're on; swipe up brings it back (latest first). Swipe up with nothing to bring back opens the overview.",
-  "shell-version": ["45", "46", "47", "48", "49"]
+  "description": "3 fingers sideways = Back/Forward in any app; 4 fingers down = minimize the window you're on, up = bring it back; 4 fingers sideways = switch desktops.",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49"
+  ]
 }

@@ -14,7 +14,8 @@ live-config.nottyautologin \
 live-config.user-default-groups=audio,cdrom,dip,floppy,video,plugdev,netdev,powerdev,scanner,bluetooth,lpadmin \
 noswap ipv6.disable=1 \
 init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 slab_nomerge \
-randomize_kstack_offset=on vsyscall=none debugfs=off \
+randomize_kstack_offset=on vsyscall=none debugfs=off pti=on \
+intel_iommu=on iommu.passthrough=0 iommu.strict=1 \
 mitigations=auto \
 nouveau.config=NvGspRm=1"
 KPARAMS="boot=live components quiet splash $COMMON"
