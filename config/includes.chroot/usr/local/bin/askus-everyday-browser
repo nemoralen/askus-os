@@ -35,6 +35,44 @@ fi
 mkdir -p "$DIR/Downloads"
 chmod 700 "$DIR"
 
+# Edge-style layout on every new profile, and once on an existing one: vertical tabs on the
+# left, sidebar always shown on the right, bookmarks bar shown. Only settings you haven't
+# chosen yourself are filled in, so changes you make in Brave are kept.
+seed_prefs() {
+  python3 - "$1" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+try:
+    with open(path) as f:
+        prefs = json.load(f)
+except (OSError, ValueError):
+    prefs = {}
+if prefs.get("askus", {}).get("layout_seeded"):
+    sys.exit(0)
+def put(keys, value):
+    d = prefs
+    for k in keys[:-1]:
+        d = d.setdefault(k, {})
+    d.setdefault(keys[-1], value)
+put(["brave", "tabs", "vertical_tabs_enabled"], True)
+put(["brave", "tabs", "vertical_tabs_on_right"], False)
+put(["brave", "sidebar", "sidebar_show_option"], 0)        # 0 = always show
+put(["side_panel", "is_right_aligned"], True)
+put(["bookmark_bar", "show_on_all_tabs"], True)
+prefs.setdefault("askus", {})["layout_seeded"] = True
+tmp = path + ".askus-tmp"
+with open(tmp, "w") as f:
+    json.dump(prefs, f)
+os.replace(tmp, path)
+PY
+}
+if command -v firejail >/dev/null 2>&1; then
+  seed_prefs "$DIR/.config/BraveSoftware/Brave-Browser/Default/Preferences"   # home inside the sandbox = $DIR
+else
+  seed_prefs "$DIR/profile/Default/Preferences"
+fi
+
 if command -v firejail >/dev/null 2>&1; then
   PROFILE=/etc/firejail/brave.profile
   [ -f "$PROFILE" ] && P=(--profile="$PROFILE") || P=()
