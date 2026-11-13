@@ -11,11 +11,14 @@ Optional  askus-app.ini  in the folder:
   Run=start.pyw          ; or index.html
   Icon=assets/icon.png
   Network=no             ; yes = allow internet THROUGH TOR (default: no network at all)
+  Opens=pdf              ; file types it can open (double-click, "Open With")
+  Default=yes            ; make it the default app for those file types
 
 Runs at login and keeps watching the folder (askus-myapps --watch).
 """
 import configparser
 import hashlib
+import mimetypes
 import os
 import re
 import sys
@@ -24,6 +27,7 @@ import time
 HOME = os.path.expanduser("~")
 APPS = os.path.join(HOME, "Persistent", "My Apps")
 OUT = os.path.join(HOME, ".local", "share", "applications")
+MIMEAPPS = os.path.join(HOME, ".config", "mimeapps.list")
 PREFIX = "askus-myapp-"
 README = """Put your own apps here - one folder per app.
 
@@ -36,14 +40,16 @@ passwords, email or Tor. Their own folder and your other files are available.
 Because this folder is in Persistent Storage, your apps stay private: they are
 not part of the public ASKus OS image.
 
-Optional: an askus-app.ini file in the app folder (Name=, Run=, Icon=, Network=).
+Optional: an askus-app.ini file in the app folder (Name=, Run=, Icon=, Network=,
+Opens=pdf to open PDF files with it, Default=yes to make it the default for them).
 """
 
 
 def detect(d):
     cfg = configparser.ConfigParser()
     ini = os.path.join(d, "askus-app.ini")
-    app = {"name": os.path.basename(d), "run": None, "icon": None, "network": "no"}
+    app = {"name": os.path.basename(d), "run": None, "icon": None, "network": "no",
+           "opens": [], "default": False}
     if os.path.isfile(ini):
         try:
             cfg.read(ini)
@@ -52,6 +58,8 @@ def detect(d):
             app["run"] = s.get("Run")
             app["icon"] = s.get("Icon")
             app["network"] = s.get("Network", "no").lower()
+            app["opens"] = mime_types(s.get("Opens", ""))
+            app["default"] = s.get("Default", "no").strip().lower() in ("yes", "true", "1")
         except Exception:  # noqa: BLE001
             pass
     files = sorted(os.listdir(d))
@@ -81,6 +89,50 @@ def detect(d):
     return app
 
 
+def mime_types(spec):
+    """'pdf, png' or 'application/pdf' -> list of MIME types."""
+    out = []
+    for item in re.split(r"[,;\s]+", spec or ""):
+        item = item.strip().lstrip(".").lower()
+        if not item:
+            continue
+        mt = item if "/" in item else mimetypes.types_map.get("." + item)
+        if mt and mt not in out:
+            out.append(mt)
+    return out
+
+
+def window_id(d):
+    """The app window's id (Wayland app id), as askus-appwindow derives it from --id."""
+    return "org.askus.MyApp." + re.sub(r"[^A-Za-z0-9_]", "_", PREFIX + slug(d))
+
+
+def set_defaults(defaults):
+    """Keep ~/.config/mimeapps.list [Default Applications] in step with Default=yes apps.
+    Only entries that point to My Apps are touched; your other choices are kept."""
+    cfg = configparser.ConfigParser(interpolation=None, strict=False)
+    cfg.optionxform = str
+    try:
+        cfg.read(MIMEAPPS)
+    except configparser.Error:
+        return
+    sec = "Default Applications"
+    if not cfg.has_section(sec):
+        cfg.add_section(sec)
+    before = dict(cfg[sec])
+    for mt, val in list(cfg[sec].items()):
+        if val.startswith(PREFIX) and defaults.get(mt) != val:
+            del cfg[sec][mt]
+    for mt, desktop in defaults.items():
+        cfg[sec][mt] = desktop
+    if dict(cfg[sec]) == before:
+        return
+    os.makedirs(os.path.dirname(MIMEAPPS), exist_ok=True)
+    with open(MIMEAPPS + ".tmp", "w") as fh:
+        cfg.write(fh, space_around_delimiters=False)
+    os.replace(MIMEAPPS + ".tmp", MIMEAPPS)
+
+
 def slug(d):
     return re.sub(r"[^a-z0-9]+", "-", os.path.basename(d).lower()).strip("-")[:40] + "-" + \
         hashlib.sha1(d.encode()).hexdigest()[:6]
@@ -93,6 +145,7 @@ def esc(s):
 def scan():
     os.makedirs(OUT, exist_ok=True)
     wanted = {}
+    defaults = {}
     if os.path.isdir(APPS):
         for name in sorted(os.listdir(APPS)):
             d = os.path.join(APPS, name)
@@ -108,11 +161,15 @@ def scan():
                 f"Name={app['name']}\n"
                 f"Comment=My App ({kind}) - runs sandboxed"
                 + (" with no network" if app["network"] != "yes" else ", network through Tor") + "\n"
-                f'Exec=/usr/local/bin/askus-myapp-run --id {PREFIX}{slug(d)} "{esc(d)}"\n'
+                f'Exec=/usr/local/bin/askus-myapp-run --id {PREFIX}{slug(d)} "{esc(d)}" %F\n'
                 f"Icon={app['icon'] or 'application-x-executable'}\n"
-                "Categories=Office;X-ASKus-MyApps;\nStartupNotify=true\n"
-                f"StartupWMClass={PREFIX}{slug(d)}\n"
+                + (f"MimeType={';'.join(app['opens'])};\n" if app["opens"] else "")
+                + "Categories=Office;X-ASKus-MyApps;\nStartupNotify=true\n"
+                f"StartupWMClass={window_id(d)}\n"
             )
+            if app["default"]:
+                for mt in app["opens"]:
+                    defaults.setdefault(mt, fn)
     changed = False
     for f in os.listdir(OUT):
         if f.startswith(PREFIX) and f not in wanted:
@@ -125,6 +182,7 @@ def scan():
             with open(p, "w") as fh:
                 fh.write(body)
             changed = True
+    set_defaults(defaults)
     return changed
 
 
@@ -145,7 +203,9 @@ def fingerprint():
     for name in sorted(os.listdir(APPS)):
         d = os.path.join(APPS, name)
         try:
-            fp.append((name, os.stat(d).st_mtime, tuple(sorted(os.listdir(d))) if os.path.isdir(d) else ()))
+            ini = os.path.join(d, "askus-app.ini")
+            fp.append((name, os.stat(d).st_mtime, tuple(sorted(os.listdir(d))) if os.path.isdir(d) else (),
+                       os.stat(ini).st_mtime if os.path.isfile(ini) else 0))   # edited settings, too
         except OSError:
             pass
     return fp
