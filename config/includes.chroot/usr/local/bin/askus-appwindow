@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """ASKus OS app window: shows one of "My Apps" in its own native window (no browser).
 
-  askus-appwindow --id ID --title TITLE [--icon PNG] [--data DIR] URL
+  askus-appwindow --id ID --title TITLE [--icon PNG] [--data DIR] [--open FILE]... URL
 
 * Uses the system's WebKitGTK engine, whose page process runs in its own bubblewrap sandbox.
 * Offline: every connection except to this computer (file:// pages, 127.0.0.1) is sent to
@@ -10,9 +10,14 @@
   dialog. Settings the app keeps (localStorage) are stored in --data (in the app's own
   folder in Persistent Storage, so they survive a restart).
 * If URL is a file that isn't a web page (e.g. a finished PDF), it opens in its normal app.
+* --open FILE: hand documents to the app as if they were dropped on its window. If the app
+  is already open, they go to that window (one window per app, a new tab in the app).
 """
 import argparse
+import json
 import os
+import pathlib
+import re
 import subprocess
 import sys
 from urllib.parse import unquote, urlparse
@@ -63,14 +68,65 @@ def open_outside(uri):
         subprocess.Popen(["xdg-open", unquote(u.path)])
 
 
+# Hands files to the page exactly like a drag-and-drop onto the middle of the window.
+DROP_JS = """
+const out = [];
+for (const p of JSON.parse(files)) {
+  const buf = await new Promise((ok, bad) => {
+    const x = new XMLHttpRequest(); x.open('GET', p.url); x.responseType = 'arraybuffer';
+    x.onload = () => ok(x.response); x.onerror = () => bad(new Error('cannot read ' + p.name)); x.send();
+  });
+  out.push(new File([buf], p.name, {type: p.type}));
+}
+const dt = new DataTransfer();
+for (const f of out) dt.items.add(f);
+const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2) || document.body;
+for (const t of ['dragenter', 'dragover', 'drop'])
+  el.dispatchEvent(new DragEvent(t, {bubbles: true, cancelable: true, dataTransfer: dt}));
+return out.length;
+"""
+
+
+def app_id(window_id):
+    """D-Bus/Wayland id for the app (one running copy per app). askus-myapps uses the same."""
+    return "org.askus.MyApp." + re.sub(r"[^A-Za-z0-9_]", "_", window_id)
+
+
 class AppWindow(Gtk.Application):
     def __init__(self, a):
-        super().__init__(flags=Gio.ApplicationFlags.NON_UNIQUE)
+        super().__init__(application_id=app_id(a.id), flags=Gio.ApplicationFlags.HANDLES_OPEN)
         self.a = a
         self.to_open = set()
         self.stubs = []
+        self.loaded = False
+        self.pending = list(a.open or [])
+
+    def do_open(self, files, _n, _hint):
+        # a second launch with documents (double-click while the app is open)
+        self.pending += [f.get_path() for f in files if f.get_path()]
+        self.do_activate()
+        self.deliver()
+
+    def on_load(self, _view, event):
+        if event == WebKit.LoadEvent.FINISHED and not self.loaded:
+            self.loaded = True
+            GLib.timeout_add(1500, lambda: (self.deliver(), False)[1])   # let the app finish starting
+
+    def deliver(self):
+        if not self.loaded or not self.pending or not self.a.url.startswith("file:"):
+            return
+        files = [{"url": pathlib.Path(p).resolve().as_uri(), "name": os.path.basename(p),
+                  "type": "application/pdf" if p.lower().endswith(".pdf") else ""}
+                 for p in self.pending if os.path.isfile(p)]
+        self.pending = []
+        if files:
+            self.view.call_async_javascript_function(DROP_JS, -1, GLib.Variant("a{sv}", {
+                "files": GLib.Variant("s", json.dumps(files))}), None, None, None, None)
 
     def do_activate(self):
+        if getattr(self, "win", None):         # already open: bring it to the front
+            self.win.present()
+            return
         a = self.a
         data = a.data or os.path.join(GLib.get_user_data_dir(), "askus-appwindow", a.id)
         os.makedirs(data, mode=0o700, exist_ok=True)
@@ -93,6 +149,7 @@ class AppWindow(Gtk.Application):
         view.connect("decide-policy", self.on_policy)
         view.connect("create", self.on_create)
         view.connect("close", lambda _v: self.win.destroy())
+        view.connect("load-changed", self.on_load)
         view.connect("notify::title", lambda v, _p: self.win.set_title(v.get_title() or a.title))
 
         self.win = Gtk.ApplicationWindow(application=self, title=a.title)
@@ -211,6 +268,7 @@ def main():
     p.add_argument("--title", default="App")
     p.add_argument("--icon")
     p.add_argument("--data")
+    p.add_argument("--open", action="append", default=[])
     p.add_argument("url")
     a = p.parse_args()
     if not is_local(a.url):
@@ -218,9 +276,20 @@ def main():
     if not is_page(a.url):
         open_outside(a.url)
         return 0
-    GLib.set_prgname(a.id)                   # window <-> app grid icon (StartupWMClass)
+    GLib.set_prgname(a.id)
     GLib.set_application_name(a.title)
-    return AppWindow(a).run([sys.argv[0]])
+    app = AppWindow(a)
+    try:
+        app.register(None)
+    except GLib.Error:
+        pass
+    if app.get_is_remote():                  # the app is already open: hand over and quit
+        if a.open:
+            app.open([Gio.File.new_for_path(p) for p in a.open], "")
+        else:
+            app.activate()
+        return 0
+    return app.run([sys.argv[0]])
 
 
 if __name__ == "__main__":
