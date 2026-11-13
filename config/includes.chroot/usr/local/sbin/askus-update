@@ -286,7 +286,8 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
     import random
     state_path = os.path.join(dest, STATE_NAME)
     try:
-        state = json.load(open(state_path))
+        with open(state_path) as f:
+            state = json.load(f)
     except (OSError, ValueError):
         state = {}
     jobs = queue.Queue()
@@ -294,7 +295,9 @@ def download(pieces, dest, total, workers=8, label="Downloading through Tor", ra
     have = {"bytes": 0}
     lock = threading.Lock()
     if ranges is not None:                        # delta mode: only these byte ranges
-        done_set = set(state.get("delta", []))
+        # The caller has just hash-checked the destination and planned only its
+        # missing ranges. Old completion metadata must not override that scan.
+        done_set = set()
         have["bytes"] = already
         wanted["delta"] = set()
         for p, a, b in ranges:
@@ -424,6 +427,7 @@ INDEX_SUFFIX = ".index.gz"
 INDEX_TAG = "image-indices"            # permanent release that keeps every build's index
 SAVED_INDEX_DIR = PERSIST_MNT + "/.askus-index"
 MERGE_GAP = 512 * 1024                 # fetch small unchanged gaps too: fewer, bigger requests
+MAX_INDEX_CHUNK = 4 * 1024 * 1024      # MAX_SIZE in tools/askus-cdc.c
 
 
 def curl_bytes(url, timeout=300):
@@ -437,7 +441,7 @@ def parse_index(raw):
     import gzip
     lines = gzip.decompress(raw).decode().split("\n")
     head = lines[0].split()
-    if head[:2] != ["askus-delta-index", "1"]:
+    if len(head) != 4 or head[:2] != ["askus-delta-index", "1"]:
         raise ValueError("not an ASKus delta index")
     chunks, pos = [], 0
     for line in lines[1:]:
@@ -445,7 +449,7 @@ def parse_index(raw):
             continue
         o, n, h = line.split()
         o, n = int(o), int(n)
-        if o != pos or n <= 0 or len(h) != 64:
+        if o != pos or not 0 < n <= MAX_INDEX_CHUNK or not SHA256_HEX.fullmatch(h.lower()):
             raise ValueError("broken delta index")
         chunks.append((o, n, h.lower()))
         pos += n
@@ -499,20 +503,40 @@ def save_index(raw, tag):
 
 
 def delta_prepare(pieces, dest, new_chunks, old_chunks, disk):
-    """Copy every unchanged chunk from the stick into the new image pieces.
-    Returns ([(offset, end) ranges still needed], bytes re-used)."""
+    """Keep verified downloaded chunks, then copy unchanged chunks from the stick.
+    Returns ([(offset, end) ranges still needed], bytes re-used locally).
+    A partial HTTP request can contain complete indexed chunks: recover those
+    without trusting download metadata, including when no old stick index exists.
+    """
     where = {}
     for o, n, h in old_chunks:
         where.setdefault(h, (o, n))
-    starts, pos = [], 0
+    starts, cached_sizes, pos = [], [], 0
     for p in pieces:
         out = os.path.join(dest, p["name"])
+        cached_sizes.append(os.path.getsize(out) if os.path.exists(out) else 0)
         if not os.path.exists(out) or os.path.getsize(out) != p["size"]:
             with open(out, "ab") as f:
                 f.truncate(p["size"])
         starts.append(pos)
         pos += p["size"]
-    fds = [os.open(os.path.join(dest, p["name"]), os.O_WRONLY) for p in pieces]
+    fds = [os.open(os.path.join(dest, p["name"]), os.O_RDWR) for p in pieces]
+
+    def cached(off, n, expected):
+        h = hashlib.sha256()
+        while n:
+            i = max(k for k in range(len(pieces)) if starts[k] <= off)
+            rel = off - starts[i]
+            size = min(n, pieces[i]["size"] - rel)
+            if size <= 0 or rel + size > cached_sizes[i]:
+                return False
+            data = os.pread(fds[i], size, rel)
+            if len(data) != size:
+                return False
+            h.update(data)
+            off += size
+            n -= size
+        return h.hexdigest() == expected
 
     def put(off, data):
         while data:
@@ -524,12 +548,16 @@ def delta_prepare(pieces, dest, new_chunks, old_chunks, disk):
             data = data[len(part):]
 
     need, reused = [], 0
-    src = os.open(disk, os.O_RDONLY)
+    src = None
     try:
+        if disk:
+            src = os.open(disk, os.O_RDONLY)
         for k, (o, n, h) in enumerate(new_chunks):
             hit = where.get(h)
-            ok = False
-            if hit and hit[1] == n:
+            ok = cached(o, n, h)
+            if ok:
+                reused += n
+            elif src is not None and hit and hit[1] == n:
                 data = os.pread(src, n, hit[0])
                 if len(data) == n and hashlib.sha256(data).hexdigest() == h:
                     put(o, data)
@@ -539,11 +567,12 @@ def delta_prepare(pieces, dest, new_chunks, old_chunks, disk):
                 need.append((o, o + n - 1))
             if k % 200 == 0:
                 write_status(state="running",
-                             step=f"Re-using the unchanged parts already on your USB stick "
+                             step=f"Re-using verified parts already downloaded or on your USB stick "
                                   f"({k * 100 // max(len(new_chunks), 1)}%)…",
                              progress=round(3 + 2 * k / max(len(new_chunks), 1), 1))
     finally:
-        os.close(src)
+        if src is not None:
+            os.close(src)
         for fd in fds:
             os.fsync(fd)
             os.close(fd)
@@ -602,11 +631,12 @@ def fetch_image(cur, assets, pieces, dest, total, expected, workers, label, chec
         if new_raw:
             write_status(state="running", step="Checking what changed in the new version…", progress=2)
             ntotal, nchunks = parse_index(new_raw)
+            if ntotal != total:
+                raise ValueError("delta index does not match image pieces")
             disk = boot_disk()
-            old = old_index(cur) if (disk and ntotal == total) else None
-            if old:
-                need, reused = delta_prepare(pieces, dest, nchunks, old[1], disk)
-                plan = (ranges_for_pieces(need, pieces), reused)
+            old = old_index(cur) if disk else None
+            need, reused = delta_prepare(pieces, dest, nchunks, old[1] if old else [], disk if old else None)
+            plan = (ranges_for_pieces(need, pieces), reused)
     except Exception:  # noqa: BLE001 - any problem: just download everything
         plan = None
     if plan:
