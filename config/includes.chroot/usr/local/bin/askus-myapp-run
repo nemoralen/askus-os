@@ -1,6 +1,7 @@
 #!/bin/bash
 # Run one of "My Apps" (~/Persistent/My Apps/<app>) in its own native window (askus-appwindow).
-#   askus-myapp-run [--id WINDOW-ID] "<app folder>"
+#   askus-myapp-run [--id WINDOW-ID] "<app folder>" [FILE...]
+#   FILE: documents to open in it (double-click / "Open With"); web apps get them as if dropped in
 #   * NO internet by default: the app window can only load files and pages on this computer
 #     (web fonts etc. are skipped). Network=yes in askus-app.ini lifts this (still only via Tor).
 #   * can't see your wallet, GnuPG/SSH keys, KeePassXC, Thunderbird, Tor Browser or Tor itself
@@ -9,6 +10,8 @@
 ID=""
 if [ "${1:-}" = "--id" ]; then ID=$2; shift 2; fi
 DIR=$1
+shift
+FILES=("$@")
 [ -d "$DIR" ] || { zenity --error --text="App folder not found:\n$DIR"; exit 1; }
 DIR=$(readlink -f "$DIR")
 NAME=$(basename "$DIR")
@@ -62,7 +65,9 @@ run() {
 case "$RUN" in
   *.html|*.htm)
     URI=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$DIR/$RUN")
-    run "${WINDOW[@]}" "$URI"
+    OPEN=()
+    for f in "${FILES[@]}"; do [ -f "$f" ] && OPEN+=(--open "$(readlink -f "$f")"); done
+    run "${WINDOW[@]}" "${OPEN[@]}" "$URI"
     ;;
   *)
     cd "$DIR" || exit 1
