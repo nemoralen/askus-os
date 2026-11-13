@@ -83,12 +83,16 @@ class AppWindow(Gtk.Application):
         view = WebKit.WebView(network_session=session)
         s = view.get_settings()
         s.set_allow_file_access_from_file_urls(True)        # the app's own files (pdf.js worker...)
-        s.set_allow_universal_access_from_file_urls(False)
+        # An app made of local files (file://) may talk to its own other windows - e.g. Norbert
+        # Desk hands an open PDF to the window it pops out (window.opener), as in Chrome/Edge.
+        # It still can't reach the internet (dead proxy above; no network at all in firejail).
+        s.set_allow_universal_access_from_file_urls(a.url.startswith("file:"))
         s.set_enable_developer_extras(False)
         s.set_javascript_can_open_windows_automatically(True)   # on_create decides what really happens
         s.set_enable_back_forward_navigation_gestures(False)
         view.connect("decide-policy", self.on_policy)
         view.connect("create", self.on_create)
+        view.connect("close", lambda _v: self.win.destroy())
         view.connect("notify::title", lambda v, _p: self.win.set_title(v.get_title() or a.title))
 
         self.win = Gtk.ApplicationWindow(application=self, title=a.title)
@@ -109,13 +113,11 @@ class AppWindow(Gtk.Application):
             if not is_local(uri):
                 decision.ignore()            # stays offline; external links are not opened
                 return True
-            if kind == WebKit.PolicyDecisionType.NEW_WINDOW_ACTION:
+            if kind == WebKit.PolicyDecisionType.NEW_WINDOW_ACTION and not is_page(uri):
                 decision.ignore()
-                if is_page(uri):
-                    self.view.load_uri(uri)
-                else:
-                    open_outside(uri)
+                open_outside(uri)
                 return True
+            # a page of the app in a new window: allowed - on_create opens a real second window
         elif kind == WebKit.PolicyDecisionType.RESPONSE:
             if not decision.is_mime_type_supported():
                 decision.download()          # e.g. a PDF: offer to save it
@@ -126,7 +128,9 @@ class AppWindow(Gtk.Application):
         uri = action.get_request().get_uri()
         if is_local(uri):
             if is_page(uri):
-                self.view.load_uri(uri)
+                # e.g. Norbert Desk's "Open in new window": a real second window, so the
+                # first one (and its open documents) stays as it is.
+                return self.new_window(_view)
             elif uri.startswith("blob:"):
                 # e.g. "Print": the app made a PDF in memory - open it in the PDF viewer
                 self.to_open.add(uri)
@@ -141,6 +145,19 @@ class AppWindow(Gtk.Application):
             else:
                 open_outside(uri)
         return None                          # never open extra windows
+
+    def new_window(self, opener):
+        view = WebKit.WebView(related_view=opener)   # same offline session and app data
+        view.set_settings(opener.get_settings())      # same rules as the first window
+        view.connect("decide-policy", self.on_policy)
+        view.connect("create", self.on_create)
+        win = Gtk.ApplicationWindow(application=self, title=self.a.title)
+        win.set_default_size(1200, 900)
+        win.set_child(view)
+        view.connect("notify::title", lambda v, _p: win.set_title(v.get_title() or self.a.title))
+        view.connect("ready-to-show", lambda _v: win.present())
+        view.connect("close", lambda _v: win.destroy())     # the page called window.close()
+        return view
 
     def on_stub_policy(self, _view, decision, _kind):
         decision.ignore()
