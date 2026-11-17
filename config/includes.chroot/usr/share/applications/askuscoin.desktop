@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Coin
+Comment=Run the ASKus Coin node, mine and manage friends' hubs (Tor only)
+Exec=/usr/local/bin/askuscoin-gui
+Icon=askus-logo
+Categories=Finance;Network;
+Keywords=askus;coin;crypto;wallet;mining;

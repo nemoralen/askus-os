@@ -13,6 +13,7 @@ Built on **Debian 13 "trixie"** with Debian `live-build`. The open-source parts 
 | **Anonymity** | System Tor with a fail-closed `nftables` firewall: every TCP connection and DNS lookup is forced through Tor, and everything else (UDP, IPv6, LAN) is blocked · Tor Browser (official build, signature-checked at build time) · bridges (obfs4 / Snowflake / meek) · `torsocks`, `nyx` |
 | **Amnesia** | Runs entirely in RAM · freed memory is wiped (`init_on_free=1`) · no swap on disk · powers off at once if the USB stick is pulled out **or you hold Ctrl+Alt and press Delete 3 times** (panic key - wipes keys and memory, works even on the lock screen) · random MAC address on every connection · no hostname sent over DHCP · UTC clock |
 | **Bitcoin** | **Electrum** wallet, preset to connect through Tor |
+| **ASKus Coin** | Your own coin (Bitcoin Core fork, 21M fixed supply): **node + wallet**, **Electrum ASKus** (multisig, hardware-style seeds), offline **paper wallet** maker, CPU mining. Tor-only, never listens for connections, off until you start it. See *ASKus Coin* below |
 | **Encryption** | **GnuPG** with **Kleopatra** and Seahorse (public/private keys) · **KeePassXC** · LUKS2 encrypted volumes (GNOME Disks) · zuluCrypt (opens VeraCrypt volumes) · `paperkey` |
 | **Metadata & files** | MAT2 / Metadata Cleaner · secure-delete · QR tools |
 | **Apps** | Thunderbird · LibreOffice · GIMP · Inkscape · Audacity |
@@ -27,7 +28,7 @@ It opens every time you start. From it you can:
 
 When you press **Start ASKus OS**, these settings lock until the next reboot, so no app can change them afterwards.
 
-**What Persistent Storage keeps:** the `~/Persistent` folder, GnuPG keys (`~/.gnupg`), Electrum wallets, KeePassXC settings, SSH keys, Thunderbird, Wi-Fi passwords and Tor bridges.
+**What Persistent Storage keeps:** the `~/Persistent` folder, GnuPG keys (`~/.gnupg`), Electrum wallets, ASKus Coin and Electrum ASKus wallets, KeePassXC settings, SSH keys, Thunderbird, Wi-Fi passwords and Tor bridges.
 
 ---
 
@@ -197,3 +198,27 @@ branding/                           logo, wordmarks, wallpaper, boot splash (SVG
 
 ## Credits & licenses
 Debian, the Tor Project (Tor, Tor Browser), Electrum, GnuPG/KDE (Kleopatra), KeePassXC, MAT2 and GNOME are covered by their own free-software licenses. The WhiteSur GTK theme, icons and cursors are © vinceliuice (GPL-3.0). ASKus OS scripts and configuration are GPL-3.0-or-later. The ASKus OS name and logo are © ASK Us Design & Consulting. ASKus OS is not affiliated with Apple, Tails or the Tor Project.
+
+---
+
+## ASKus Coin
+
+ASKus Coin (ticker **ASK**) is a private Bitcoin-style coin for you and your friends. It's built from Bitcoin Core v31.2, with a new network identity and its own first block.
+
+| | |
+|---|---|
+| Supply | 21,000,000 ASK maximum. The reward halves every 210,000 blocks, the same as Bitcoin. No one can create more. |
+| Blocks | Every 10 minutes, SHA-256 mining, difficulty adjusts every 2016 blocks. Includes the timewarp-attack fix. |
+| Addresses | `ask1q…` (SegWit) · `ask1p…` (Taproot) · `A…` (legacy) · `S…` (multisig). Bitcoin addresses and keys are rejected, and vice versa. |
+| Ports | 27444 (peer network) · 27443 (local RPC) · 27001/27002 (Electrum server) |
+
+**Apps:**
+- **ASKus Coin**: start or stop the node, add a friend's hub, mine.
+- **Electrum ASKus**: the everyday wallet, with 2-of-3 multisig and seed words.
+- **ASKus Coin Paper Wallet**: opens in a sandbox with no network at all.
+
+**Hubs.** One always-on computer runs the *hub* (`tools/askuscoin-hub/setup-hub.sh`). It's reachable only as a `.onion` address. Everyone adds that address: in the ASKus Coin app for the node, and under *Network → Server* for Electrum ASKus.
+
+**Privacy.** ASKus Coin is pseudonymous, like Bitcoin. Your IP address is hidden by Tor, but payments between addresses are visible on the chain. Use a new address for each payment.
+
+**Security.** A small coin is only as safe as the mining behind it. Wait for 6 or more confirmations before trusting a payment.

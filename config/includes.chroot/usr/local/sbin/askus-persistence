@@ -28,6 +28,8 @@ FEATURES=(
   "askus-settings:$H/.config/askus:user:0700"
   "feather:$H/.config/feather:user:0700"
   "monero-wallets:$H/Monero:user:0700"
+  "askuscoin:$H/.askuscoin:user:0700"
+  "electrum-askus:$H/.electrum-askus:user:0700"
   "screenshots:$H/Pictures/Screenshots:user:0700"
 )
 

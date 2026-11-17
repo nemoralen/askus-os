@@ -1,0 +1,13 @@
+#!/bin/bash
+# Opens the paper wallet generator in a sandbox with NO network at all (firejail --net=none),
+# so keys can never leave the computer while they are on screen.
+PAGE=/usr/local/share/askuscoin/askuscoin-paper-wallet.html
+if command -v firejail >/dev/null 2>&1 && command -v brave-browser >/dev/null 2>&1; then
+  DIR=$(mktemp -d /tmp/askus-paper.XXXXXX); trap 'rm -rf "$DIR"' EXIT
+  firejail --quiet --net=none --private="$DIR" --blacklist=/run/askus --blacklist=/etc/tor \
+    brave-browser --incognito --no-first-run --app="file://$PAGE"
+else
+  zenity --warning --title="Paper Wallet" --width=380 \
+    --text="Opening in Tor Browser. For real coins, disconnect from the network first."
+  exec askus-tor-browser "file://$PAGE"
+fi

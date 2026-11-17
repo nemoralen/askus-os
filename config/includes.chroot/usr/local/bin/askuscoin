@@ -1,0 +1,60 @@
+#!/bin/bash
+# ASKus Coin node control for ASKus OS.
+# The privacy settings are forced on the command line, so no config file can turn them off:
+# Tor only (.onion peers only), never listens for incoming connections, no DNS, no seeds.
+set -u
+BIN=/opt/askuscoin/bin
+DATA="$HOME/.askuscoin"
+SAFE=(-proxy=127.0.0.1:9150 -onion=127.0.0.1:9150 -proxyrandomize=1 -onlynet=onion
+      -listen=0 -listenonion=0 -i2pacceptincoming=0 -discover=0 -natpmp=0
+      -dnsseed=0 -dns=0 -fixedseeds=0
+      -rpcbind=127.0.0.1 -rpcallowip=127.0.0.1 -server=1
+      -conf=/etc/askuscoin/askuscoin.conf -datadir="$DATA")
+cli() { "$BIN/askuscoin-cli" -conf=/etc/askuscoin/askuscoin.conf -datadir="$DATA" "$@"; }
+running() { cli getblockcount >/dev/null 2>&1; }
+persistent() { mountpoint -q "$DATA" 2>/dev/null; }
+
+[ -x "$BIN/askuscoind" ] || { echo "ASKus Coin is not installed in this build." >&2; exit 1; }
+mkdir -p "$DATA"; chmod 700 "$DATA"
+[ -f "$DATA/peers.conf" ] || printf '# Your friends'"'"' ASKus Coin hubs, one per line:\n# addnode=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.onion:27444\n' > "$DATA/peers.conf"
+
+case "${1:-help}" in
+  start)
+    running && { echo "already running"; exit 0; }
+    persistent || echo "WARNING: Persistent Storage for ASKus Coin is not unlocked - this wallet will be ERASED at shutdown." >&2
+    PEERS=()   # only well-formed .onion hubs are accepted from peers.conf
+    while IFS= read -r l; do
+      [[ "$l" =~ ^addnode=([a-z2-7]{56}\.onion(:[0-9]{1,5})?)$ ]] && PEERS+=("-addnode=${BASH_REMATCH[1]}")
+    done < "$DATA/peers.conf"
+    [ ${#PEERS[@]} -eq 0 ] && echo "No hubs yet: add one with  askuscoin addpeer <hub>.onion" >&2
+    "$BIN/askuscoind" "${SAFE[@]}" "${PEERS[@]}" -daemon && echo "ASKus Coin node starting (Tor only, ${#PEERS[@]} hub(s))" ;;
+  stop)    cli stop ;;
+  status)
+    running || { echo "node: stopped"; exit 0; }
+    echo "node: running   blocks: $(cli getblockcount)   peers: $(cli getconnectioncount)"
+    cli listwallets ;;
+  addpeer)
+    P="${2:-}"; case "$P" in *:*) ;; ?*) P="$P:27444" ;; esac
+    [[ "$P" =~ ^[a-z2-7]{56}\.onion:[0-9]{1,5}$ ]] || { echo "usage: askuscoin addpeer <56-character address>.onion[:27444]"; exit 1; }
+    grep -qx "addnode=$P" "$DATA/peers.conf" || echo "addnode=$P" >> "$DATA/peers.conf"
+    running && cli addnode "$P" add; echo "added $P" ;;
+  mine)
+    # CPU mining, one block at a time, until you press Ctrl+C or run "askuscoin mine stop"
+    [ "${2:-}" = stop ] && { pkill -f "askuscoin-mine-loop" ; echo "mining stopped"; exit 0; }
+    running || { echo "start the node first"; exit 1; }
+    ADDR=$(cli getnewaddress "mining" bech32) || exit 1
+    echo "Mining to $ADDR (Ctrl+C to stop). New coins can be spent after 100 more blocks."
+    exec -a askuscoin-mine-loop bash -c 'while :; do "$0" -conf=/etc/askuscoin/askuscoin.conf -datadir="$1" generatetoaddress 1 "$2" 100000000 | grep -o "[0-9a-f]\{64\}" | sed "s/^/found block /"; done' "$BIN/askuscoin-cli" "$DATA" "$ADDR" ;;
+  cli) shift; cli "$@" ;;
+  *) cat <<'H'
+askuscoin start | stop | status          run the ASKus Coin node (Tor only)
+askuscoin addpeer <hub>.onion            connect to a friend's ASKus Coin hub
+askuscoin mine | mine stop               mine ASK with this computer's CPU
+askuscoin cli <command>                  wallet & node commands, e.g.:
+    askuscoin cli createwallet "mywallet"            (then: encryptwallet "passphrase")
+    askuscoin cli getnewaddress                       receive address (ask1...)
+    askuscoin cli sendtoaddress <address> <amount>
+    askuscoin cli getbalance
+H
+  ;;
+esac
