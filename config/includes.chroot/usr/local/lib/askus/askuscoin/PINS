@@ -1,0 +1,8 @@
+# ASKus Coin source pins. The build refuses to continue if the downloaded source
+# is not exactly this commit. Change these only together with the patch scripts.
+BITCOIN_REPO=https://github.com/bitcoin/bitcoin
+BITCOIN_TAG=v31.2
+BITCOIN_COMMIT=241537a697561d1748909744069f1382aa15827f
+ELECTRUM_REPO=https://github.com/spesmilo/electrum
+ELECTRUM_TAG=4.8.4
+ELECTRUM_COMMIT=54ff65dfe1b77ef6e00f00f296a557d86c454ca0
