@@ -1,0 +1,9 @@
+#!/bin/bash
+# Electrum ASKus - always through Tor, only to the one server you choose (your hub's .onion).
+E=/opt/electrum-askus
+[ -x "$E/bin/electrum" ] || { zenity --error --title="Electrum ASKus" --text="Electrum ASKus is not installed in this build."; exit 1; }
+if ! mountpoint -q "$HOME/.electrum-askus" 2>/dev/null; then
+  zenity --question --title="Electrum ASKus" --width=400 --ok-label="Continue anyway" --cancel-label="Cancel" \
+    --text="Persistent Storage for <b>Electrum ASKus</b> is not unlocked.\n\nA wallet you create now will be <b>erased at shutdown</b> unless you write down its seed words." || exit 0
+fi
+exec "$E/bin/electrum" --proxy socks5:127.0.0.1:9050 "$@"
