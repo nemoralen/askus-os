@@ -1,0 +1,21 @@
+#!/bin/bash
+# Simple menu for the ASKus Coin node.
+while :; do
+  STATUS=$(askuscoin status 2>&1 | head -1)
+  CH=$(zenity --list --title="ASKus Coin" --width=460 --height=360 --text="$STATUS" \
+       --column="Action" "Start node" "Stop node" "Status" "Add a friend's hub (.onion)" \
+       "Start mining (opens a terminal)" "Stop mining" "Open paper wallet" "Open Electrum ASKus") || exit 0
+  case "$CH" in
+    "Start node") OUT=$(askuscoin start 2>&1) ;;
+    "Stop node") OUT=$(askuscoin stop 2>&1) ;;
+    "Status") OUT=$(askuscoin status 2>&1) ;;
+    "Add a friend's hub (.onion)")
+      H=$(zenity --entry --title="Add hub" --text="Hub address (xxxx.onion or xxxx.onion:27444):") || continue
+      OUT=$(askuscoin addpeer "$H" 2>&1) ;;
+    "Start mining (opens a terminal)") gnome-terminal -- askuscoin mine; continue ;;
+    "Stop mining") OUT=$(askuscoin mine stop 2>&1) ;;
+    "Open paper wallet") askuscoin-paper-wallet & continue ;;
+    "Open Electrum ASKus") electrum-askus & continue ;;
+  esac
+  zenity --info --title="ASKus Coin" --width=420 --text="$(printf '%s' "$OUT" | sed 's/&/\&amp;/g;s/</\&lt;/g')"
+done
