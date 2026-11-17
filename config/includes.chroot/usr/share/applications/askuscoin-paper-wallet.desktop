@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus Coin Paper Wallet
+Comment=Make a printable ASKus Coin paper wallet (offline sandbox)
+Exec=/usr/local/bin/askuscoin-paper-wallet
+Icon=printer
+Categories=Finance;Office;
+Keywords=askus;coin;paper;wallet;cold;storage;
