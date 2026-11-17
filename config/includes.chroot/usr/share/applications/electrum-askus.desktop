@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Electrum ASKus
+Comment=ASKus Coin wallet (connects through Tor)
+Exec=/usr/local/bin/electrum-askus %u
+Icon=electrum
+Categories=Finance;Network;
+Keywords=askus;coin;wallet;multisig;
+StartupWMClass=electrum
