@@ -1,0 +1,137 @@
+#!/usr/bin/python3 -I
+"""ASKus OS: check saved Additional Software packages before they are installed at startup.
+
+Usage: verify-saved-debs LISTS_DIR DEBS_DIR
+Prints the .deb files that are genuine, one per line. A .deb counts as genuine only if its
+SHA-256 appears in a Debian package list (Packages) whose hash appears in an InRelease file
+that is signed by a key in the Debian archive keyring that ships inside the read-only system
+image. Anything else (changed, unknown or unsigned) is moved to DEBS_DIR/rejected and
+reported on stderr, so it is never installed.
+"""
+import glob
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+KEYRINGS = [k for k in ("/usr/share/keyrings/debian-archive-keyring.gpg",
+                        "/usr/share/keyrings/debian-archive-keyring.pgp") if os.path.exists(k)]
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def read_list(path):
+    """Contents of a Packages file, decompressing it if apt stored it compressed.
+    (The signed Release lists the hash of the uncompressed file.)"""
+    if path.endswith(".gz"):
+        import gzip
+        return gzip.open(path).read()
+    if path.endswith(".xz"):
+        import lzma
+        return lzma.open(path).read()
+    if path.endswith(".lz4"):
+        # apt's own helper reads every format apt stores its lists in
+        r = subprocess.run(["/usr/lib/apt/apt-helper", "cat-file", path], capture_output=True)
+        if r.returncode != 0:
+            raise OSError("could not read " + path)
+        return r.stdout
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def signed_text(inrelease):
+    """Return the signed content of an InRelease file, or None if the signature is not good."""
+    if not KEYRINGS:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "out")
+        cmd = ["gpgv", "--quiet", "--status-fd", "1", "--output", out]
+        for k in KEYRINGS:
+            cmd += ["--keyring", k]
+        r = subprocess.run(cmd + [inrelease], capture_output=True, text=True)
+        if r.returncode != 0 or "[GNUPG:] VALIDSIG" not in r.stdout:
+            return None
+        with open(out, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+
+def release_hashes(text):
+    """SHA256 section of a Release file: {relative path: (hash, size)}."""
+    hashes, on = {}, False
+    for line in text.splitlines():
+        if line.startswith("SHA256:"):
+            on = True
+            continue
+        if on:
+            if not line.startswith(" "):
+                break
+            parts = line.split()
+            if len(parts) == 3:
+                hashes[parts[2]] = (parts[0].lower(), int(parts[1]))
+    return hashes
+
+
+def genuine_debs(lists_dir):
+    """{deb file name: sha256} for every package in a signature-checked package list."""
+    good = {}
+    for inrel in glob.glob(os.path.join(lists_dir, "*_InRelease")):
+        text = signed_text(inrel)
+        if text is None:
+            print(f"rejected list (bad signature): {os.path.basename(inrel)}", file=sys.stderr)
+            continue
+        hashes = release_hashes(text)
+        prefix = os.path.basename(inrel)[: -len("InRelease")]
+        for pk in glob.glob(os.path.join(lists_dir, glob.escape(prefix) + "*_Packages*")):
+            rel = re.sub(r"\.(gz|xz|lz4)$", "", os.path.basename(pk)[len(prefix):]).replace("_", "/")
+            want = hashes.get(rel)
+            try:
+                data = read_list(pk)
+            except OSError:
+                data = None
+            if not want or data is None or hashlib.sha256(data).hexdigest() != want[0]:
+                print(f"rejected list (not in signed Release): {os.path.basename(pk)}", file=sys.stderr)
+                continue
+            name = digest = None
+            for line in data.decode("utf-8", "replace").splitlines():
+                if line.startswith("Filename: "):
+                    name = os.path.basename(line[10:].strip())
+                elif line.startswith("SHA256: "):
+                    digest = line[8:].strip().lower()
+                elif not line.strip():
+                    if name and digest:
+                        good[name] = digest
+                    name = digest = None
+            if name and digest:
+                good[name] = digest
+    return good
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit("usage: verify-saved-debs LISTS_DIR DEBS_DIR")
+    lists_dir, debs_dir = sys.argv[1], sys.argv[2]
+    good = genuine_debs(lists_dir)
+    rejected = os.path.join(debs_dir, "rejected")
+    for deb in sorted(glob.glob(os.path.join(debs_dir, "*.deb"))):
+        base = os.path.basename(deb)
+        # apt stores "name_1%3a2.0_amd64.deb" for epoch versions; the archive uses "name_2.0_amd64.deb"
+        key = re.sub(r"_\d+%3a", "_", base)
+        if os.path.islink(deb) or not os.path.isfile(deb) or good.get(key) != sha256(deb):
+            os.makedirs(rejected, exist_ok=True)
+            shutil.move(deb, os.path.join(rejected, base))
+            print(f"rejected package (not genuine): {base}", file=sys.stderr)
+            continue
+        print(deb)
+
+
+if __name__ == "__main__":
+    main()

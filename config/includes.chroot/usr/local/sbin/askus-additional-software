@@ -11,6 +11,8 @@ set -uo pipefail
 DIR=/var/lib/askus/additional-software
 LIST=$DIR/packages.list
 DEBS=$DIR/debs
+LISTS=$DIR/lists
+VERIFY=/usr/local/lib/askus/verify-saved-debs
 LOG=/run/askus/additional-software.log
 U=askus
 export DEBIAN_FRONTEND=noninteractive
@@ -49,7 +51,11 @@ save_debs() {   # keep the .deb files of the packages and their extra dependenci
   mkdir -p "$DEBS/partial"
   apt-get install -y -qq --reinstall --download-only -o Dir::Cache::archives="$DEBS" "$@" >/dev/null 2>&1 || true
   apt-get autoclean -qq -o Dir::Cache::archives="$DEBS" >/dev/null 2>&1 || true
-  rm -rf "$DEBS/partial"
+  rm -rf "$DEBS/partial" "$DEBS/rejected"
+  # Keep Debian's signed package lists next to them, so they can be checked at the next start
+  rm -rf "$LISTS.new"; mkdir -p "$LISTS.new"
+  cp -p /var/lib/apt/lists/*_InRelease /var/lib/apt/lists/*_Packages* "$LISTS.new"/ 2>/dev/null
+  rm -rf "$LISTS"; mv "$LISTS.new" "$LISTS"
 }
 
 cmd=${1:-status}; shift || true
@@ -87,7 +93,10 @@ case "$cmd" in
     [ ${#PKGS[@]} -gt 0 ] || exit 0
     log "reinstalling: ${PKGS[*]}"
     OFFLINE=no
-    if ls "$DEBS"/*.deb >/dev/null 2>&1 && dpkg -i "$DEBS"/*.deb >>"$LOG" 2>&1; then
+    # Only packages whose SHA-256 is in Debian's signed package lists are installed;
+    # anything changed or unknown is moved aside and never runs.
+    mapfile -t GOOD < <(/usr/bin/python3 -I "$VERIFY" "$LISTS" "$DEBS" 2>>"$LOG")
+    if [ ${#GOOD[@]} -gt 0 ] && dpkg -i "${GOOD[@]}" >>"$LOG" 2>&1; then
       OFFLINE=yes
       log "installed from Persistent Storage"
       notify "Additional software installed" "${PKGS[*]}"

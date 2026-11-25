@@ -1,0 +1,43 @@
+name: Test Electrum ASKus build
+
+# Runs only the Electrum ASKus build step inside Debian 13, the same system the ISO uses,
+# so a failure shows its real error in a few minutes instead of a full ISO build.
+on:
+  push:
+    paths:
+      - ".github/workflows/test-electrum-askus.yml"
+      - "config/hooks/live/0475-askus-askuscoin.hook.chroot"
+      - "config/includes.chroot/usr/local/lib/askus/askuscoin/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  electrum:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Electrum ASKus exactly as the ISO hook does
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates build-essential pkg-config \
+            python3-venv python3-dev autoconf automake libtool python3-pyqt6 python3-cryptography python3-pip
+          LIB=config/includes.chroot/usr/local/lib/askus/askuscoin
+          . "$LIB/PINS"
+          T=$(mktemp -d)
+          git clone -q --depth 1 --branch "$ELECTRUM_TAG" "$ELECTRUM_REPO" "$T/electrum"
+          test "$(git -C "$T/electrum" rev-parse HEAD)" = "$ELECTRUM_COMMIT"
+          python3 -B "$LIB/apply_electrum_askus.py" "$T/electrum"
+          E=/opt/electrum-askus
+          python3 -m venv --system-site-packages "$E"
+          "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps -r "$T/electrum/contrib/deterministic-build/requirements.txt"
+          "$E/bin/pip" install --no-cache-dir --no-deps --no-build-isolation "$T/electrum"
+          cd /
+          "$E/bin/python3" -c "import electrum; from electrum import constants; assert constants.net.SEGWIT_HRP=='ask'; print('Electrum ASKus OK', constants.net.SEGWIT_HRP)"

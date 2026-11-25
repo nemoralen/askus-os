@@ -8,11 +8,12 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); PATCHES="$HERE/../../config/includes.chroot/usr/local/lib/askus/askuscoin"
 BITCOIN_COMMIT=241537a697561d1748909744069f1382aa15827f    # Bitcoin Core v31.2
 ELECTRUMX_TAG=2.0.1
+ELECTRUMX_COMMIT=39d477f31727ff95ce99694f6d8cb4a4cd7bd633   # ElectrumX 2.0.1
 U=askuscoin; HOME_DIR=/var/lib/askuscoin
 
 apt-get update
 apt-get install -y --no-install-recommends git build-essential cmake pkg-config libboost-dev libevent-dev \
-  libsqlite3-dev python3 python3-venv python3-dev libleveldb-dev tor openssl ca-certificates
+  libsqlite3-dev python3 python3-venv python3-dev python3-plyvel libleveldb-dev tor openssl ca-certificates
 id $U >/dev/null 2>&1 || useradd --system --home-dir $HOME_DIR --create-home --shell /usr/sbin/nologin $U
 SRC=$(mktemp -d)
 
@@ -27,9 +28,12 @@ install -m755 "$SRC/core/build/bin/bitcoin-cli" /usr/local/bin/askuscoin-cli
 
 # 2. ElectrumX (server for Electrum ASKus)
 git clone -q --depth 1 --branch $ELECTRUMX_TAG https://github.com/spesmilo/electrumx "$SRC/electrumx"
+[ "$(git -C "$SRC/electrumx" rev-parse HEAD)" = "$ELECTRUMX_COMMIT" ] || { echo "ElectrumX source is not the pinned commit"; exit 1; }
 python3 -B "$HERE/apply_electrumx_askus.py" "$SRC/electrumx"
-python3 -m venv /opt/electrumx-askus
-/opt/electrumx-askus/bin/pip install -q "$SRC/electrumx" plyvel
+# every Python package is checked against its pinned SHA-256; LevelDB comes from python3-plyvel
+python3 -m venv --system-site-packages /opt/electrumx-askus
+/opt/electrumx-askus/bin/pip install -q --no-cache-dir --require-hashes -r "$HERE/requirements-electrumx.txt"
+/opt/electrumx-askus/bin/pip install -q --no-cache-dir --no-deps --no-build-isolation "$SRC/electrumx"
 
 # 3. config (random RPC password, never leaves this machine)
 RPCPASS=$(openssl rand -hex 24)
