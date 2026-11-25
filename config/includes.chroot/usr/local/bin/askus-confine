@@ -1,0 +1,72 @@
+#!/bin/bash
+# ASKus OS: start an app inside a firejail sandbox so a hacked app can't reach the rest of
+# your files.
+#   askus-confine tor-browser CMD...        Tor Browser sees ONLY ~/Tor Browser and, when
+#                                           Persistent Storage is unlocked, ~/Persistent/Tor Browser
+#   askus-confine wallet NAME CMD...        a wallet sees its own data, but not your other
+#                                           wallets, GnuPG keys, password databases, email,
+#                                           Everyday Browser, My Apps or Tor Browser
+#   askus-confine wallet-appimage NAME FILE ARGS...   same, for a wallet shipped as AppImage
+# All modes: no extra privileges, no admin rights, no Tor settings, no Tor control socket.
+set -u
+P="$HOME/Persistent"
+mode=${1:-}; shift || true
+
+COMMON=(--quiet --noprofile --caps.drop=all --nonewprivs --nogroups
+        --blacklist=/etc/tor --blacklist=/run/askus-tor --blacklist=/run/askus
+        --blacklist=/run/live --blacklist=/var/lib/askus)
+
+# Secrets no sandboxed app needs. Firejail ignores entries that don't exist.
+SECRETS=("$HOME/.gnupg" "$HOME/.ssh" "$HOME/.thunderbird" "$HOME/.config/keepassxc"
+         "$P/.everyday-browser" "$P/My Apps" "$P/.askus-assistant" "$P/.gnupg" "$P/.thunderbird"
+         "$P/*.kdbx" "$P/*/*.kdbx" "$HOME/*.kdbx" "/opt/tor-browser")
+WALLETS=("$HOME/.electrum" "$HOME/.electrum-askus" "$HOME/.askuscoin" "$HOME/.feather"
+         "$HOME/.config/feather" "$HOME/Monero" "$P/.electrum" "$P/.electrum-askus" "$P/.askuscoin")
+
+no_sandbox() {   # firejail missing: never silently run without the sandbox
+  zenity --question --title="Sandbox not available" --width=400 \
+    --ok-label="Start without sandbox" --cancel-label="Cancel" \
+    --text="The firejail sandbox isn't installed, so this app would run without isolation." || exit 0
+  exec "$@"
+}
+
+case "$mode" in
+  tor-browser)
+    command -v firejail >/dev/null || no_sandbox "$@"
+    mkdir -p "$HOME/Tor Browser"
+    WL=(--whitelist="$HOME/Tor Browser")
+    if mountpoint -q "$P"; then mkdir -p "$P/Tor Browser"; WL+=(--whitelist="$P/Tor Browser"); fi
+    start=$(date +%s)
+    firejail "${COMMON[@]}" "${WL[@]}" --seccomp='!chroot' \
+      --blacklist=/media --blacklist=/run/media --blacklist=/mnt "$@"
+    rc=$?
+    # If the browser couldn't even start inside the sandbox, say so instead of failing silently.
+    if [ $rc -ne 0 ] && [ $(( $(date +%s) - start )) -lt 15 ]; then
+      zenity --question --title="Tor Browser" --width=420 \
+        --ok-label="Start without sandbox" --cancel-label="Cancel" \
+        --text="Tor Browser could not start inside its sandbox.\n\nIt still goes through Tor either way; without the sandbox it can see all your files. Tell Claude so it can be fixed." \
+        && exec "$@"
+    fi
+    exit $rc
+    ;;
+  wallet|wallet-appimage)
+    name=${1:?wallet name}; shift
+    command -v firejail >/dev/null || no_sandbox "$@"
+    BL=()
+    for s in "${SECRETS[@]}"; do BL+=(--blacklist="$s"); done
+    for w in "${WALLETS[@]}"; do
+      case "$w" in *"/.$name"|*"/$name"|*"/.config/$name") continue ;; esac
+      [ "$name" = feather ] && case "$w" in */Monero) continue ;; esac
+      BL+=(--blacklist="$w")
+    done
+    if [ "$mode" = wallet-appimage ]; then
+      app=${1:?AppImage}; shift
+      exec firejail "${COMMON[@]}" "${BL[@]}" --seccomp --appimage "$app" "$@"
+    fi
+    exec firejail "${COMMON[@]}" "${BL[@]}" --seccomp "$@"
+    ;;
+  *)
+    echo "usage: askus-confine tor-browser CMD... | wallet NAME CMD... | wallet-appimage NAME FILE ARGS..." >&2
+    exit 2
+    ;;
+esac

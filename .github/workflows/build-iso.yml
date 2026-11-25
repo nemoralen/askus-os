@@ -38,6 +38,8 @@ jobs:
         run: |
           ID=$(date -u +%Y%m%d%H%M)
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+          # Reproducible timestamps: every file in the image gets the commit's time, not the build's
+          echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
           echo "tag=v1.0-$ID" >> "$GITHUB_OUTPUT"
           echo "Building ASKus OS v1.0-$ID"
 
@@ -63,6 +65,7 @@ jobs:
           docker run --rm --privileged -v "$PWD":/work -w /work \
             -e ASKUS_BUILD_ID="${{ steps.ver.outputs.id }}" \
             -e ASKUS_UPDATE_REPO="${{ github.repository }}" \
+            -e SOURCE_DATE_EPOCH="${{ steps.ver.outputs.sde }}" \
             debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
             bash -c "chmod +x build.sh branding/render.sh branding/src/make-logo.sh auto/* config/hooks/live/* config/includes.chroot/usr/local/bin/* config/includes.chroot/usr/local/sbin/* && apt-get update && apt-get install -y --no-install-recommends ca-certificates && ./build.sh"
 
@@ -72,7 +75,23 @@ jobs:
           NAME="askus-os-${{ steps.ver.outputs.id }}.iso"
           sudo mv "$(ls -1 *.iso | head -n1)" "out/$NAME"
           sudo cp build.log out/build.log || true
+          PKGS=$(ls -1 chroot.packages.live *.packages 2>/dev/null | head -n1 || true)
           sudo chown -R "$(id -u)" out
+          # MANIFEST (signed in the release job): the fingerprint of every file on the stick's
+          # system partition and every Debian package version in this build. ASKus checks its
+          # own files against it at startup (tamper check), and anyone can use it to verify a
+          # release or compare it with their own rebuild (tools/verify-release.sh).
+          sudo mkdir -p /mnt/askus-iso && sudo mount -o loop,ro "out/$NAME" /mnt/askus-iso
+          {
+            echo "ASKUS-MANIFEST 1"
+            echo "build askus-os-${{ steps.ver.outputs.id }}.iso"
+            echo "commit $GITHUB_SHA"
+            echo "source_date_epoch ${{ steps.ver.outputs.sde }}"
+            (cd /mnt/askus-iso && sudo find . -type f -print0 | sort -z | sudo xargs -0 sha256sum) | sed 's/^/F /'
+            if [ -n "$PKGS" ]; then sed 's/^/P /' "$PKGS"; fi
+          } > out/MANIFEST
+          sudo umount /mnt/askus-iso
+          grep -c '^F ' out/MANIFEST
           cd out
           sha256sum "$NAME" > SHA256SUMS            # checksum of the WHOLE iso (used by the in-OS updater)
           # Fast (delta) updates: fingerprint the image in ~256 KB chunks, so installed systems
@@ -145,7 +164,16 @@ jobs:
           rm -f out/SHA256SUMS.sig
           ssh-keygen -q -Y sign -f "$KEYDIR/key" -n askus-release out/SHA256SUMS
           shred -u "$KEYDIR/key" 2>/dev/null || rm -f "$KEYDIR/key"
-          chmod 644 out/SHA256SUMS.sig
+          # The MANIFEST of this same build is signed too (used by the boot tamper check), under its
+          # own namespace so its signature can never be passed off as an update signature
+          if [ "$(sed -n 2p out/MANIFEST)" != "build $NAME" ]; then echo "::error::MANIFEST is not for $NAME"; exit 1; fi
+          rm -f out/MANIFEST.sig
+          printf '%s\n' "$ASKUS_SIGNING_KEY" | tr -d '\r' > "$KEYDIR/key"
+          ssh-keygen -q -Y sign -f "$KEYDIR/key" -n askus-manifest out/MANIFEST
+          shred -u "$KEYDIR/key" 2>/dev/null || rm -f "$KEYDIR/key"
+          chmod 644 out/SHA256SUMS.sig out/MANIFEST.sig
+          ssh-keygen -Y verify -f "$SIGNERS" -I askus-release -n askus-manifest \
+            -s out/MANIFEST.sig < out/MANIFEST
           # make sure the key that signed matches the public key built into the OS
           ssh-keygen -Y verify -f "$SIGNERS" -I askus-release -n askus-release \
             -s out/SHA256SUMS.sig < out/SHA256SUMS
@@ -165,7 +193,7 @@ jobs:
 
           **New install:** download the \`.iso\` (if it's split into \`.part00\`/\`.part01\`, join them: Windows \`copy /b file.part00 + file.part01 file.iso\`, Mac/Linux \`cat file.part* > file.iso\`), check it against \`SHA256SUMS\`, then flash it to a USB stick with balenaEtcher.
           EOF
-          gh release create "$TAG" out/*.iso* out/SHA256SUMS out/SHA256SUMS.sig \
+          gh release create "$TAG" out/*.iso* out/SHA256SUMS out/SHA256SUMS.sig out/MANIFEST out/MANIFEST.sig \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "ASKus OS $TAG" --notes-file notes.md --latest
 
@@ -180,7 +208,11 @@ jobs:
               --title "Update indices (for fast updates)" \
               --notes "Chunk fingerprints of every ASKus OS build, used by the in-OS updater to download only what changed. Not an installable release."
           fi
-          gh release upload image-indices out/*.index.gz --repo "$GITHUB_REPOSITORY" --clobber
+          # ...and its signed MANIFEST, which the boot tamper check downloads by build number
+          NAME="askus-os-${{ needs.build.outputs.id }}.iso"
+          cp out/MANIFEST "out/$NAME.manifest"; cp out/MANIFEST.sig "out/$NAME.manifest.sig"
+          gh release upload image-indices out/*.index.gz "out/$NAME.manifest" "out/$NAME.manifest.sig" \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Remove old releases (keep the newest ${{ env.KEEP_RELEASES }})
         env:

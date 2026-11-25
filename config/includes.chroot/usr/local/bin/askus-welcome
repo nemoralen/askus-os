@@ -105,6 +105,23 @@ class Welcome(Adw.ApplicationWindow):
         hero.append(s)
         page.append(hero)
 
+        # --- Session mode ---
+        mode_group = Adw.PreferencesGroup(
+            title="This session",
+            description="Keeps anonymous browsing and your real accounts apart. "
+                        "To switch, restart ASKus.")
+        self.mode_row = Adw.ComboRow(title="Mode")
+        self.mode_row.set_model(Gtk.StringList.new(["Anonymous (recommended)", "Personal"]))
+        self.mode_row.set_selected(0)
+        self.mode_row.add_prefix(Gtk.Image.new_from_icon_name("security-high-symbolic"))
+        self.mode_row.connect("notify::selected", self.on_mode_changed)
+        mode_group.add(self.mode_row)
+        self.mode_hint = Gtk.Label(wrap=True, xalign=0, margin_top=8)
+        self.mode_hint.add_css_class("dim-label")
+        mode_group.add(self.mode_hint)
+        self.on_mode_changed()
+        page.append(mode_group)
+
         # --- Persistent storage ---
         self.persist_group = Adw.PreferencesGroup(title="Persistent Storage")
         self.persist_rows = []
@@ -228,6 +245,37 @@ class Welcome(Adw.ApplicationWindow):
         self.refresh_status()
 
     # ---------- helpers ----------
+    def mode(self):
+        return "personal" if self.mode_row.get_selected() == 1 else "anonymous"
+
+    def on_mode_changed(self, *_):
+        if self.mode() == "personal":
+            self.mode_hint.set_label("Personal: Everyday Browser and your logins are available. "
+                                     "Tor Browser warns before opening - don't do anything "
+                                     "anonymous in this session.")
+        else:
+            self.mode_hint.set_label("Anonymous: Tor Browser only. The Everyday Browser (where you "
+                                     "log in as yourself) is switched off for this session.")
+
+    def apply_mode(self, mode):
+        """Hide or show the Everyday Browser in the app menu for this session."""
+        d = os.path.expanduser("~/.local/share/applications")
+        os.makedirs(d, exist_ok=True)
+        for name in ("askus-everyday-browser.desktop", "askus-everyday-browser-keep.desktop"):
+            override = os.path.join(d, name)
+            try:
+                if mode == "anonymous":
+                    with open(os.path.join("/usr/share/applications", name)) as f:
+                        text = f.read()
+                    if "NoDisplay=" not in text:
+                        text = text.replace("[Desktop Entry]\n", "[Desktop Entry]\nNoDisplay=true\n", 1)
+                    with open(override, "w") as f:
+                        f.write(text)
+                elif os.path.exists(override):
+                    os.remove(override)
+            except OSError:
+                pass
+
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
 
@@ -513,8 +561,11 @@ class Welcome(Adw.ApplicationWindow):
         if self.finished:
             return True
         try:
-            r = subprocess.run(["pkexec", PERSIST, "finish"], capture_output=True, timeout=30)
+            r = subprocess.run(["pkexec", PERSIST, "finish", self.mode()], capture_output=True,
+                               text=True, timeout=30)
             self.finished = r.returncode == 0
+            if self.finished:
+                self.apply_mode(parse_kv(r.stdout).get("mode", "anonymous"))
         except (OSError, subprocess.SubprocessError):
             self.finished = False
         if not self.finished:

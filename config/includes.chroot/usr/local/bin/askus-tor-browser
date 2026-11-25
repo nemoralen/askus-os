@@ -6,4 +6,16 @@ TB=/opt/tor-browser
 if [ ! -x "$TB/Browser/start-tor-browser" ]; then
   zenity --error --title="Tor Browser" --text="Tor Browser is not installed in this image." ; exit 1
 fi
-cd "$TB" && exec ./Browser/start-tor-browser --detach "$@"
+# Personal mode (chosen on the Welcome screen): warn once per session, because you may be
+# logged in to your real accounts in the Everyday Browser right now.
+NOTE="${XDG_RUNTIME_DIR:-/tmp}/askus-tor-browser-personal-noted"
+if [ "$(cat /run/askus/mode 2>/dev/null)" = personal ] && [ ! -e "$NOTE" ]; then
+  zenity --question --title="Personal session" --width=440 \
+    --ok-label="Open Tor Browser" --cancel-label="Cancel" \
+    --text="This session is in <b>Personal</b> mode: you may be logged in to your real accounts.\n\nFor anything anonymous, restart ASKus and choose <b>Anonymous</b> on the Welcome screen, so the two never mix." || exit 0
+  touch "$NOTE"
+fi
+
+# Sandboxed (askus-confine): it can only see ~/Tor Browser and ~/Persistent/Tor Browser.
+# No --detach: the sandbox lives exactly as long as the browser.
+cd "$TB" && exec /usr/local/bin/askus-confine tor-browser "$TB/Browser/start-tor-browser" "$@"
