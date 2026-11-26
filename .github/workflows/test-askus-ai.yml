@@ -30,3 +30,29 @@ jobs:
           persist-credentials: false
       - name: Build engine and run ASKus AI in its sandbox
         run: bash tools/test-askus-ai.sh
+
+  firejail-offline:
+    # Same firejail options as the askus-ai launcher, on a normal (non-container) runner:
+    # ASKus AI's --require-offline guard must start inside it and refuse outside it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: firejail --net=none leaves only loopback
+        run: |
+          set -eux
+          sudo apt-get update -q && sudo apt-get install -y -q firejail
+          APP=$PWD/config/includes.chroot/usr/local/lib/askus-ai/app/app.py
+          mkdir -p /tmp/d
+          # outside the sandbox the guard must refuse (exit 3)
+          set +e; python3 -I "$APP" --data /tmp/d --engine /none --require-offline; rc=$?; set -e
+          test "$rc" = 3
+          # inside: the guard must let it start (it prints its local URL)
+          out=$(timeout 20 firejail --noprofile --net=none --whitelist=/tmp/d --private-tmp --caps.drop=all \
+                  --nonewprivs --nogroups --noroot --seccomp \
+                  python3 -u -I "$APP" --data /tmp/d --engine /none --window none --require-offline 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "http://127.0.0.1:"
+          ! echo "$out" | grep -q "existing sandbox"

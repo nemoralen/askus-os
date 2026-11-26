@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test ASKus AI in Debian 13 (used by .github/workflows/test-askus-ai.yml):
-# (GitHub runs this inside Docker. firejail sees Docker's marker files and would skip sandboxing,
-#  so they are removed first; ASKus AI's own offline guard would stop the test otherwise.)
+# (firejail won't sandbox inside GitHub's Docker container, so the chat test runs in its own empty
+#  network namespace here; the firejail sandbox itself is tested on a plain runner: firejail-offline job.)
 # build the engine exactly as the ISO hook does, then run the app with a tiny random
 # GGUF model (no download) inside a no-network sandbox and check a full chat works.
 set -euxo pipefail
@@ -38,9 +38,6 @@ python3 -c "import hashlib,json,sys; h=hashlib.sha256(open(sys.argv[1],'rb').rea
 echo "Cabinet boxes use 3/4 inch plywood." > "$D/Knowledge/standards.md"
 cp "$REPO/tools/askus-ai-check.py" /home/tester/
 chown -R tester /home/tester
-rm -f /.dockerenv /run/.containerenv; unset container
-su tester -c "firejail --noprofile --net=none --whitelist=$D --whitelist=/home/tester/askus-ai-check.py \
-  --private-tmp --caps.drop=all --nonewprivs --nogroups --noroot --seccomp \
-  python3 -I /home/tester/askus-ai-check.py $D $E" || {
+unshare --net su tester -c "python3 -I /home/tester/askus-ai-check.py $D $E" || {
     echo "== app/engine log"; cat "$D/.engine.log" 2>/dev/null; exit 1; }
 echo "ASKus AI test passed"
