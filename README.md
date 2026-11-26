@@ -138,21 +138,6 @@ For sites where you log in as yourself anyway (business email, banking, YouTube)
 - **Everyday Browser** forgets everything when you close it. **Everyday Browser (keep logins)** saves logins and bookmarks in your Persistent Storage.
 - **Not anonymous:** once you log in, the site knows it's you. Use **Tor Browser** for anything anonymous, and never mix the two for the same task.
 
-## ASKus Assistant (AI)
-
-A chat app in the dock with two modes. The window colour always shows which one you're using:
-
-| Mode | Where it runs | Privacy |
-|---|---|---|
-| **Claude** (purple) | Anthropic's servers, reached through Tor. Needs an API key from console.anthropic.com. | **Private, not anonymous.** Your IP is hidden, but your API account identifies you. |
-| **Local AI** (green) | On your computer with Ollama, completely offline after a one-time download (about 2–7 GB, through Tor). | **Fully private.** Nothing leaves the machine. |
-
-- **Sandboxed** with firejail. It cannot see your Persistent folder, wallet, keys, Tor Browser, Tor settings or USB drives.
-- **Files only when you share them.** Put a file in **Shared with AI** (in Files) and click 📎. It reads text, images and PDFs; PDFs work with Claude only.
-- **Switching modes starts a new conversation,** so nothing from Local AI is ever sent to Claude.
-- The API key and the Local AI live in Persistent Storage when it's unlocked; otherwise they're forgotten at shutdown.
-- **Don't paste anything from anonymous Tor sessions into Claude.**
-
 ## Automatic program updates
 
 About 1–5 minutes after Tor connects, and then **every 6 hours** while it's running, ASKus OS installs **security fixes, stable updates and Brave updates** in the background, **downloaded through Tor**, so update servers never see your IP address. A notification tells you how many were installed. 
@@ -170,6 +155,28 @@ Open **Leak Test** from the app grid (or run `askus-leak-test --text` in a termi
 - that AppArmor is on, there's no disk swap, and freed memory is wiped
 
 ❌ means a real leak; ⚠️ usually means "Tor still connecting" or "running in a virtual machine".
+
+## Anonymous / Personal session
+Choose on the Welcome screen at startup (switching needs a restart, so the two never mix):
+- **Anonymous** (default): Tor Browser only. The Everyday Browser, where you log in as yourself, is off.
+- **Personal**: Everyday Browser and logins available. Tor Browser warns before it opens.
+
+## Security status (shield in the top bar)
+Green = all good, yellow = worth a look, red = something is wrong. Click it for Tor, firewall, session mode, Persistent Storage, the tamper check and updates, plus quick links to the Tor check and leak test.
+
+## Tamper check
+After Tor connects, ASKus downloads the signed **MANIFEST** of its own build and checks every file on the stick's system partition against it. If anything was changed, added or removed (for example by someone who had your stick), you get a loud warning. It's an alarm, not a lock: someone who rewrites the stick could rewrite the check too. For certainty, check the stick or a release from another computer with `tools/verify-release.sh`.
+
+## Sandboxed apps
+- **Tor Browser** only sees the **Tor Browser** folder (and **Persistent › Tor Browser**). Save downloads there, and copy files there to upload them.
+- **Wallets** (Electrum, Electrum ASKus, Feather) can't see your other wallets, GnuPG keys, password databases, email, Everyday Browser or My Apps.
+- **Thunderbird** runs under its AppArmor profile. Normal boot also turns on **kernel lockdown** (the fail-safe boot entry doesn't, in case a driver refuses to load).
+
+## Outgoing folder
+Put a file in **Outgoing** (in the Files sidebar, or **Persistent › Outgoing**) and its hidden metadata (camera, GPS position, author, edit history) is removed automatically. A notification says when it's ready, or warns if a file can't be cleaned.
+
+## Verifying a release yourself
+Every release has a signed `MANIFEST` (every file on the stick, every Debian package version). Builds use the commit time for all timestamps. `tools/verify-release.sh DIR` checks the signatures, the image and every file inside it.
 
 ## Security notes (please read)
 

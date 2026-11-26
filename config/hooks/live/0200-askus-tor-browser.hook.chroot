@@ -28,6 +28,11 @@ mkdir -p /opt/tor-browser/Browser/defaults/pref
 cat > /opt/tor-browser/Browser/defaults/pref/askus.js <<'PREF'
 // ASKus OS default: security level Safer (4 = Standard, 2 = Safer, 1 = Safest)
 pref("browser.security_level.security_slider", 2);
+// Downloads go to the "Tor Browser" folder in your home (the only place it can see,
+// with Persistent > Tor Browser); it asks where to save each file.
+pref("browser.download.folderList", 2);
+pref("browser.download.dir", "/home/askus/Tor Browser");
+pref("browser.download.useDownloadDir", false);
 PREF
 # The live user (uid 1000, created by live-config at boot) owns the browser so it can write its profile.
 chown -R 1000:1000 /opt/tor-browser

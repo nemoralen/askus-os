@@ -141,6 +141,27 @@ bind_features() {
   systemctl start --no-block askus-additional-software.service 2>/dev/null || true
 }
 
+# Passphrase hashing: Argon2id with 1 GiB of memory, 4 threads and ~3 s of work. Every
+# passphrase guess costs an attacker the same, so guessing is far slower than the default.
+KDF="--pbkdf-memory 1048576 --pbkdf-parallel 4 --iter-time 3000"
+KDF_MEM=1048576
+
+# Upgrade an older Persistent Storage to these settings. Needs the passphrase, so it runs
+# right after a successful unlock. LUKS2 keeps two copies of its header, so the volume
+# stays readable even if the computer loses power while this runs.
+strengthen() {
+  local part=$1 mem
+  mem=$(cryptsetup luksDump --dump-json-metadata "$part" 2>/dev/null | /usr/bin/python3 -Ic '
+import json, sys
+d = json.load(sys.stdin)
+ks = [k["kdf"] for k in d["keyslots"].values()]
+print(min((k.get("memory", 0) if k.get("type") == "argon2id" else 0) for k in ks) if ks else 0)') || return 0
+  [ "${mem:-0}" -ge "$KDF_MEM" ] && return 0
+  # shellcheck disable=SC2086
+  printf '%s' "$PASS" | cryptsetup luksConvertKey --batch-mode --pbkdf argon2id $KDF --key-file=- "$part" \
+    >/dev/null 2>&1 && echo "strengthened=yes" || echo "strengthened=no"
+}
+
 open_and_mount() {
   local part=$1
   [ -e /dev/mapper/$MAP ] || printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" $MAP ||
@@ -184,7 +205,7 @@ case "$cmd" in
       udevadm settle; sleep 1
       part=$(part_by_number "$disk" "$n") || die "the new partition did not appear; please restart and try again (it will be reused)"
     fi
-    printf '%s' "$PASS" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf argon2id \
+    printf '%s' "$PASS" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf argon2id $KDF \
         --label "$LABEL" --key-file=- "$part"
     printf '%s' "$PASS" | cryptsetup open --key-file=- "$part" $MAP
     mkfs.ext4 -q -L askus-data -m 0 /dev/mapper/$MAP
@@ -200,6 +221,7 @@ case "$cmd" in
     open_and_mount "$part"
     bind_features
     echo "unlocked=yes"
+    strengthen "$part"
     ;;
   lock)
     need_flag
@@ -213,6 +235,12 @@ case "$cmd" in
     echo "unlocked=no"
     ;;
   finish)
-    touch "$CLOSED"; rm -f "$FLAG"; echo "welcome=closed" ;;
-  *) die "usage: askus-persistence status|create|unlock|lock|finish" ;;
+    # Session mode (Anonymous or Personal), chosen on the Welcome screen. Written by root
+    # and only once, so it can't be switched later in the same session.
+    if [ ! -e /run/askus/mode ]; then
+      case "${2:-anonymous}" in personal) m=personal ;; *) m=anonymous ;; esac
+      mkdir -p /run/askus && printf '%s\n' "$m" > /run/askus/mode && chmod 644 /run/askus/mode
+    fi
+    touch "$CLOSED"; rm -f "$FLAG"; echo "welcome=closed"; echo "mode=$(cat /run/askus/mode)" ;;
+  *) die "usage: askus-persistence status|create|unlock|lock|finish [anonymous|personal]" ;;
 esac

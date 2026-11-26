@@ -1,0 +1,92 @@
+#!/usr/bin/python3 -I
+"""ASKus OS "Outgoing" folder: every file you put in ~/Outgoing (or ~/Persistent/Outgoing)
+gets its hidden metadata removed automatically with mat2 - camera model and GPS position in
+photos, author names and edit history in documents, and so on. Put files there before you
+upload or send them. Runs at login (autostart)."""
+import os
+import subprocess
+
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+HOME = os.path.expanduser("~")
+FOLDERS = [os.path.join(HOME, "Outgoing"), os.path.join(HOME, "Persistent", "Outgoing")]
+done = {}       # path -> (size, mtime) right after we cleaned it, so our own write isn't re-cleaned
+monitors = []
+
+
+def notify(title, body, icon="edit-clear-all-symbolic"):
+    try:
+        subprocess.Popen(["notify-send", "--app-name=Outgoing", f"--icon={icon}", title, body])
+    except OSError:
+        print(title, "-", body, flush=True)
+
+
+def stamp(path):
+    st = os.stat(path)
+    return (st.st_size, st.st_mtime_ns)
+
+
+def clean(path):
+    name = os.path.basename(path)
+    if name.startswith(".") or not os.path.isfile(path) or os.path.islink(path):
+        return
+    try:
+        if done.get(path) == stamp(path):
+            return
+    except OSError:
+        return
+    r = subprocess.run(["mat2", "--inplace", path], capture_output=True, text=True)
+    try:
+        done[path] = stamp(path)
+    except OSError:
+        pass
+    if r.returncode == 0:
+        notify("Metadata removed", f"{name} is ready to share.")
+    else:
+        notify("Couldn't clean this file", f"{name}: mat2 can't remove its metadata. "
+               "Don't share it as it is.", icon="dialog-warning")
+    return False
+
+
+def on_change(_mon, file, _other, event):
+    if event in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.MOVED_IN):
+        path = file.get_path()
+        # small delay: let the app that saved the file finish writing
+        GLib.timeout_add(700, clean, path)
+
+
+def watch():
+    for d in FOLDERS:
+        if d.startswith(os.path.join(HOME, "Persistent")) and not os.path.ismount(os.path.join(HOME, "Persistent")):
+            continue
+        if any(m[0] == d for m in monitors):
+            continue
+        os.makedirs(d, exist_ok=True)
+        for n in os.listdir(d):            # files already there when we start
+            GLib.idle_add(clean, os.path.join(d, n))
+        mon = Gio.File.new_for_path(d).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, None)
+        mon.connect("changed", on_change)
+        monitors.append((d, mon))
+    return True                             # re-check later: Persistent may be unlocked after login
+
+
+def bookmark():
+    bm = os.path.join(HOME, ".config", "gtk-3.0", "bookmarks")
+    os.makedirs(os.path.dirname(bm), exist_ok=True)
+    try:
+        text = open(bm).read()
+    except OSError:
+        text = ""
+    line = "file://" + os.path.join(HOME, "Outgoing") + " Outgoing (metadata removed)\n"
+    if "/Outgoing " not in text:
+        with open(bm, "a") as f:
+            f.write(line)
+
+
+if __name__ == "__main__":
+    bookmark()
+    watch()
+    GLib.timeout_add_seconds(30, watch)
+    GLib.MainLoop().run()

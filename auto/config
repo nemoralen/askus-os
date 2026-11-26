@@ -18,7 +18,10 @@ randomize_kstack_offset=on vsyscall=none debugfs=off pti=on \
 intel_iommu=on iommu.passthrough=0 iommu.strict=1 \
 mitigations=auto \
 nouveau.config=NvGspRm=1"
-KPARAMS="boot=live components quiet splash $COMMON"
+# Normal boot only: kernel lockdown (even the administrator can't read kernel memory, load
+# unsigned drivers or swap in another kernel) and AppArmor app confinement. The fail-safe
+# entry keeps working without them if a driver ever refuses to load.
+KPARAMS="boot=live components quiet splash $COMMON lockdown=confidentiality apparmor=1 security=apparmor"
 FAILSAFE="boot=live components $COMMON memtest noapic noapm nodma nomce nosmp nosplash vga=788"
 
 lb config noauto \

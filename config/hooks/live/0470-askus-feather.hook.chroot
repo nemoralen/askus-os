@@ -44,7 +44,7 @@ cat > /usr/share/applications/askus-feather.desktop <<EOF
 Type=Application
 Name=Feather Wallet
 Comment=Monero wallet (connects through Tor)
-Exec=$DEST/AppRun
+Exec=/usr/local/bin/askus-confine wallet feather $DEST/AppRun
 Icon=${ICON:-wallet}
 Categories=Finance;Network;
 Keywords=monero;xmr;wallet;crypto;

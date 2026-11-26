@@ -20,5 +20,7 @@
   ],
   "SafeBrowsingProtectionLevel": 1,
   "SearchSuggestEnabled": false,
-  "UrlKeyedAnonymizedDataCollectionEnabled": false
+  "UrlKeyedAnonymizedDataCollectionEnabled": false,
+  "DefaultGeolocationSetting": 2,
+  "DefaultSensorsSetting": 2
 }

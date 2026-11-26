@@ -54,7 +54,7 @@ if ! command -v electrum >/dev/null 2>&1; then
 [Desktop Entry]
 Type=Application
 Name=Electrum Bitcoin Wallet
-Exec=electrum %u
+Exec=/usr/local/bin/askus-confine wallet-appimage electrum /opt/electrum/electrum.AppImage %u
 Icon=electrum
 Categories=Finance;Network;
 MimeType=x-scheme-handler/bitcoin;
@@ -64,6 +64,12 @@ DESK
   fi
   rm -rf "$TMP"; unset GNUPGHOME
   set +e
+fi
+
+# Electrum from Debian's archive (if it was available): start it in its sandbox too
+if [ -x /usr/bin/electrum ] && [ -f /usr/share/applications/electrum.desktop ]; then
+  sed -i -E 's|^Exec=(/usr/bin/)?electrum |Exec=/usr/local/bin/askus-confine wallet electrum /usr/bin/electrum |' \
+    /usr/share/applications/electrum.desktop
 fi
 
 echo "[askus] optional packages not available: ${FAILED[*]:-none}" | tee /usr/share/askus/missing-optional-packages.txt

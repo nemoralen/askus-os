@@ -1,0 +1,90 @@
+#!/usr/bin/python3 -I
+"""ASKus OS: one-line-per-item security status for the top-bar panel (no network use).
+Prints JSON: {"items": [{"name", "value", "level": "ok"|"warn"|"bad"}], "level": worst}."""
+import json
+import os
+import socket
+import subprocess
+
+HOME = os.path.expanduser("~")
+RUN = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+
+
+def tor():
+    """Ask Tor (through the filtered control socket ASKus gives desktop apps) whether it has
+    built a circuit. Read-only questions only."""
+    def reply(s):
+        data = b""
+        while not (data.endswith(b"250 OK\r\n") or data[:1] in (b"4", b"5")) and len(data) < 8192:
+            chunk = s.recv(1024)
+            if not chunk:
+                break
+            data += chunk
+        return data.decode(errors="replace")
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(2)
+            s.connect("/run/askus-tor/control")
+            s.sendall(b"AUTHENTICATE\r\n")
+            if not reply(s).startswith("250"):
+                return "Unknown", "warn"
+            s.sendall(b"GETINFO status/circuit-established\r\n")
+            if "circuit-established=1" in reply(s):
+                return "Connected", "ok"
+            s.sendall(b"GETINFO status/bootstrap-phase\r\n")
+            text = reply(s)
+        pct = text.split("PROGRESS=")[1].split()[0] if "PROGRESS=" in text else "0"
+        return f"Connecting… {pct}%", "warn"
+    except OSError:
+        return "Not connected", "bad"
+
+
+def active(unit):
+    return subprocess.run(["systemctl", "is-active", "--quiet", unit],
+                          stderr=subprocess.DEVNULL).returncode == 0
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def main():
+    items = []
+    v, lvl = tor()
+    items.append(("Tor", v, lvl))
+    items.append(("Firewall", "On - only Tor can reach the internet" if active("nftables")
+                  else "OFF - no network allowed", "ok" if active("nftables") else "bad"))
+    items.append(("Network card address", "Random on every connection", "ok"))
+    mode = read("/run/askus/mode") or "anonymous"
+    items.append(("Session", "Personal - don't do anything anonymous" if mode == "personal"
+                  else "Anonymous", "warn" if mode == "personal" else "ok"))
+    persistent = os.path.ismount(os.path.join(HOME, "Persistent"))
+    items.append(("Persistent Storage", "Unlocked" if persistent else "Locked (nothing is saved)", "ok"))
+    try:
+        sc = json.loads(read("/run/askus/selfcheck.json") or "{}")
+    except ValueError:
+        sc = {}
+    state = sc.get("state", "")
+    if state == "ok":
+        items.append(("Tamper check", f"All {sc.get('files', '')} system files are genuine", "ok"))
+    elif state == "changed":
+        items.append(("Tamper check", "SYSTEM FILES CHANGED - don't trust this session", "bad"))
+    elif state == "checking":
+        items.append(("Tamper check", "Checking…", "ok"))
+    else:
+        items.append(("Tamper check", "Not checked" + (f" ({sc['reason']})" if sc.get("reason") else ""), "warn"))
+    upd = read(os.path.join(RUN, "askus-update-available"))
+    items.append(("ASKus Update", f"{upd} is ready - open ASKus Update" if upd else "No update waiting",
+                  "warn" if upd else "ok"))
+    order = {"ok": 0, "warn": 1, "bad": 2}
+    worst = max((i[2] for i in items), key=order.get)
+    print(json.dumps({"items": [{"name": n, "value": v, "level": l} for n, v, l in items],
+                      "level": worst}))
+
+
+if __name__ == "__main__":
+    main()

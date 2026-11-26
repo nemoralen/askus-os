@@ -11,6 +11,14 @@ if ! command -v brave-browser >/dev/null 2>&1; then
   exit 1
 fi
 
+# Anonymous mode (chosen on the Welcome screen): the browser where you log in as yourself
+# stays off, so the two identities can't mix in one session.
+if [ "$(cat /run/askus/mode 2>/dev/null)" != personal ]; then
+  zenity --info --title="Everyday Browser is off" --width=420 \
+    --text="This session is in <b>Anonymous</b> mode, so the Everyday Browser (where you log in as yourself) is switched off.\n\nTo use it, restart ASKus and choose <b>Personal</b> on the Welcome screen." || true
+  exit 0
+fi
+
 # Once per session: what this browser is (and isn't) for.
 NOTE="${XDG_RUNTIME_DIR:-/tmp}/askus-everyday-browser-noted"
 if [ ! -e "$NOTE" ]; then

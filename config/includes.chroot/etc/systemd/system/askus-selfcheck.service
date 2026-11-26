@@ -1,0 +1,14 @@
+[Unit]
+Description=ASKus OS: check the system files on this USB stick against the signed release
+After=network-online.target tor@default.service nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/askus-selfcheck
+Nice=15
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+
+[Install]
+WantedBy=multi-user.target

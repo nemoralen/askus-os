@@ -4,7 +4,7 @@ set -eu
 
 # ---- services ----
 systemctl enable nftables.service
-systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer askus-tor-control-filter.service askus-panic-keys.service
+systemctl enable askus-resolv.service askus-usb-watchdog.service askus-autoupdate.service askus-autoupdate.timer askus-tordate.service askus-update-prefetch.timer askus-tor-control-filter.service askus-panic-keys.service askus-selfcheck.service
 # Ctrl+Alt+Delete is the panic key - don't let it start a normal reboot
 systemctl mask ctrl-alt-del.target
 systemctl enable tor.service || true
@@ -95,3 +95,13 @@ update-initramfs -u -k all || true
 
 # ---- locale ----
 sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen || true
+
+# ---- AppArmor: enforce Thunderbird's own confinement profile ----
+# (If Debian ships it disabled or in "complain" mode, switch it to enforce, so a hacked
+# Thunderbird is actually blocked. Tor Browser and the wallets use askus-confine.)
+for prof in /etc/apparmor.d/usr.bin.thunderbird /etc/apparmor.d/thunderbird; do
+  [ -f "$prof" ] || continue
+  rm -f "/etc/apparmor.d/disable/$(basename "$prof")"
+  sed -i -E 's/ flags=\(complain\)//' "$prof" 2>/dev/null || true
+done
+systemctl enable apparmor.service 2>/dev/null || true

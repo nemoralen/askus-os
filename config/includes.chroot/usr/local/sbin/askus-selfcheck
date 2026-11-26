@@ -1,0 +1,158 @@
+#!/usr/bin/python3 -I
+"""ASKus OS tamper check: are the system files on this USB stick exactly what was released?
+
+After Tor connects, this downloads the signed MANIFEST of the installed build (through Tor),
+checks its signature with the ASKus release key, and compares the fingerprint of every file
+on the stick's system partition with it. If anything was changed, added or removed - for
+example by someone who had the stick for a while - you get a loud warning.
+
+Limit: it's an alarm, not a lock. Someone who rewrites the stick could also rewrite this
+check. For certainty, check the stick from another computer with tools/verify-release.sh.
+
+Result: /run/askus/selfcheck.json  {"state": "ok"|"changed"|"unavailable", ...}
+"""
+import hashlib
+import json
+import os
+import pwd
+import subprocess
+import tempfile
+import time
+
+RELEASE_FILE = "/etc/askus-release"
+SIGNERS = "/etc/askus/release-signers"
+MEDIUM = "/run/live/medium"
+OUT = "/run/askus/selfcheck.json"
+TOR = "socks5h://127.0.0.1:9050"
+USER = "askus"
+
+
+def release():
+    info = {}
+    try:
+        for line in open(RELEASE_FILE):
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                info[k] = v
+    except OSError:
+        pass
+    return info
+
+
+def save(state, **kw):
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    kw.update(state=state, time=int(time.time()))
+    tmp = OUT + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(kw, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, OUT)
+
+
+def fetch(url, dest):
+    subprocess.run(["curl", "-fsSL", "--proxy", TOR, "--retry", "3", "--max-time", "120",
+                    "-H", "User-Agent: askus-selfcheck", "-o", dest, url], check=True,
+                   capture_output=True)
+
+
+def wait_for_tor():
+    for _ in range(120):
+        r = subprocess.run(["curl", "-s", "-m", "10", "--proxy", TOR, "https://check.torproject.org/api/ip"],
+                           capture_output=True, text=True)
+        if '"IsTor":true' in r.stdout:
+            return True
+        time.sleep(5)
+    return False
+
+
+def notify(title, body, urgent=False):
+    try:
+        uid = pwd.getpwnam(USER).pw_uid
+    except KeyError:
+        return
+    bus = f"/run/user/{uid}/bus"
+    if not os.path.exists(bus):
+        return
+    env = ["env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}"]
+    subprocess.run(["runuser", "-u", USER, "--", *env, "notify-send", "--app-name=ASKus tamper check",
+                    "--icon=" + ("dialog-warning" if urgent else "security-high"),
+                    *(["--urgency=critical"] if urgent else []), title, body],
+                   capture_output=True)
+    if urgent:
+        subprocess.Popen(["runuser", "-u", USER, "--", *env, f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                          "zenity", "--warning", "--title=ASKus OS may have been tampered with",
+                          "--width=460", "--text=" + body])
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def main():
+    rel = release()
+    bid, repo = rel.get("BUILD_ID", ""), rel.get("UPDATE_REPO", "")
+    if not bid.isdigit() or not repo or not os.path.isdir(MEDIUM):
+        save("unavailable", reason="not a released ASKus build started from USB")
+        return
+    save("checking")
+    if not wait_for_tor():
+        save("unavailable", reason="Tor is not connected")
+        return
+    name = f"askus-os-{bid}.iso"
+    with tempfile.TemporaryDirectory() as tmp:
+        man, sig = os.path.join(tmp, "MANIFEST"), os.path.join(tmp, "MANIFEST.sig")
+        # Every build's MANIFEST is also kept permanently in the "image-indices" release
+        base = f"https://github.com/{repo}/releases/download/image-indices/{name}.manifest"
+        try:
+            fetch(base, man)
+            fetch(base + ".sig", sig)
+        except subprocess.CalledProcessError:
+            save("unavailable", reason="this build's MANIFEST could not be downloaded")
+            return
+        with open(man, "rb") as f:
+            r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", SIGNERS, "-I", "askus-release",
+                                "-n", "askus-manifest", "-s", sig], stdin=f, capture_output=True)
+        if r.returncode != 0:
+            save("changed", reason="the downloaded MANIFEST is not signed by the ASKus release key")
+            notify("Tamper check failed", "The list of genuine ASKus files could not be verified. "
+                   "Don't trust this session; check the stick from another computer.", urgent=True)
+            return
+        lines = open(man, encoding="utf-8").read().splitlines()
+    if len(lines) < 2 or lines[1] != f"build {name}":
+        save("changed", reason="MANIFEST is for a different build")
+        return
+    want = {}
+    for line in lines:
+        # "F <64 hex digits>  ./path/inside/the/image"
+        if line.startswith("F ") and line[66:68] == "  ":
+            want[line[68:].removeprefix("./")] = line[2:66]
+    have = {}
+    for root, _dirs, files in os.walk(MEDIUM):
+        for fn in files:
+            p = os.path.join(root, fn)
+            rel_path = os.path.relpath(p, MEDIUM)
+            try:
+                have[rel_path] = sha256(p)
+            except OSError:
+                have[rel_path] = "unreadable"
+    changed = sorted(p for p in want if p in have and have[p] != want[p])
+    missing = sorted(p for p in want if p not in have)
+    extra = sorted(p for p in have if p not in want)
+    if changed or missing or extra:
+        save("changed", changed=changed[:50], missing=missing[:50], added=extra[:50])
+        body = ("Files on this USB stick are not the ones that were released"
+                f" ({len(changed)} changed, {len(missing)} missing, {len(extra)} added).\n\n"
+                "Someone may have modified the stick. Don't enter passwords or do anything "
+                "sensitive in this session. Shut down, then check or reflash the stick from "
+                "another computer.")
+        notify("ASKus OS may have been tampered with", body, urgent=True)
+        return
+    save("ok", files=len(want))
+
+
+if __name__ == "__main__":
+    main()

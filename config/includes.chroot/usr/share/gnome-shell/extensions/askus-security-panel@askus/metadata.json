@@ -1,0 +1,6 @@
+{
+  "uuid": "askus-security-panel@askus",
+  "name": "ASKus Security Status",
+  "description": "A shield in the top bar showing Tor, firewall, session mode, Persistent Storage, the tamper check and updates at a glance.",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}

@@ -11,6 +11,7 @@ done
 R=$(/usr/local/sbin/askus-update check --json 2>/dev/null) || exit 0
 echo "$R" | grep -q '"newer": true' || exit 0
 TAG=$(echo "$R" | sed -n 's/.*"latest": "\([^"]*\)".*/\1/p')
+printf '%s\n' "$TAG" > "${XDG_RUNTIME_DIR:-/tmp}/askus-update-available"   # shown in the status panel
 
 ACTION=$(notify-send --app-name="ASKus Update" --icon=askus-logo --urgency=normal \
   --action=update="Update now" --action=later="Later" \

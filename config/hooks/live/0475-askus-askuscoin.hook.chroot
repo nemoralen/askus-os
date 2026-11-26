@@ -59,12 +59,13 @@ if fetch "$ELECTRUM_REPO" "$ELECTRUM_TAG" "$ELECTRUM_COMMIT" "$T/electrum" && py
   E=/opt/electrum-askus
   rm -rf "$E"
   # Qt and cryptography come from Debian (security updates); everything else is hash-pinned by Electrum
-  python3 -m venv --system-site-packages "$E" &&
-  "$E/bin/pip" install -q --no-cache-dir --require-hashes --no-deps -r "$T/electrum/contrib/deterministic-build/requirements.txt" &&
-  "$E/bin/pip" install -q --no-cache-dir --no-deps --no-build-isolation "$T/electrum" &&
-  "$E/bin/python3" -c "import electrum; from electrum import constants; assert constants.net.SEGWIT_HRP=='ask'" &&
+  { python3 -m venv --system-site-packages "$E" &&
+    "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps -r "$T/electrum/contrib/deterministic-build/requirements.txt" &&
+    "$E/bin/pip" install --no-cache-dir --no-deps --no-build-isolation "$T/electrum" &&
+    ( cd / && "$E/bin/python3" -c "import electrum; from electrum import constants; assert constants.net.SEGWIT_HRP=='ask'" ); } \
+    >"$T/electrum.log" 2>&1 &&
   { echo "$ELECTRUM_TAG+askus" > "$E/ASKUS-VERSION"; note "Electrum ASKus installed"; } ||
-  { rm -rf "$E"; note "Electrum ASKus install FAILED - skipped"; }
+  { rm -rf "$E"; note "Electrum ASKus install FAILED - skipped. Last lines of the log:"; tail -n 40 "$T/electrum.log" | sed 's/^/[askus]   /'; }
 else
   note "Electrum source not available - skipped"
 fi

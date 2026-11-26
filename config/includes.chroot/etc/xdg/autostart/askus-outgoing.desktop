@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Outgoing folder (removes metadata)
+Exec=/usr/local/bin/askus-outgoing
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-Autostart-Delay=10
