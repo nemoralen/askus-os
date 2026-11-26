@@ -1,0 +1,38 @@
+{
+  "_comment": "ASKus AI model list. GGUF only. 'sha256' is filled in from the first verified download (checked against the hash Hugging Face publishes) and then pinned; ASKus OS only loads files whose SHA-256 matches. Sizes in bytes are approximate until pinned.",
+  "models": [
+    {
+      "id": "qwen3-4b",
+      "name": "Qwen3 4B (fast, any PC)",
+      "repo": "Qwen/Qwen3-4B-GGUF",
+      "file": "Qwen3-4B-Q4_K_M.gguf",
+      "sha256": "",
+      "approx_gb": 2.5,
+      "layers": 36,
+      "min_ram_gb": 8,
+      "min_vram_gb": 0
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B (better answers)",
+      "repo": "Qwen/Qwen3-8B-GGUF",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "sha256": "",
+      "approx_gb": 5.03,
+      "layers": 36,
+      "min_ram_gb": 16,
+      "min_vram_gb": 6
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B (best, needs a strong GPU)",
+      "repo": "Qwen/Qwen3-14B-GGUF",
+      "file": "Qwen3-14B-Q4_K_M.gguf",
+      "sha256": "",
+      "approx_gb": 9.0,
+      "layers": 40,
+      "min_ram_gb": 32,
+      "min_vram_gb": 8
+    }
+  ]
+}

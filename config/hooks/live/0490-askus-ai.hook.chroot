@@ -1,0 +1,62 @@
+#!/bin/bash
+# ASKus AI: local AI engine (llama.cpp's llama-server) built from a pinned source commit.
+#  - CPU: every x86-64 variant is built and the best one for the computer is picked at
+#    runtime (Ryzen, Intel Surface, older PCs alike); GPU: Vulkan (open Mesa drivers, incl.
+#    NVK for NVIDIA RTX cards) - no closed drivers, kernel lockdown stays on.
+#  - Built without HTTPS support, so it can't download anything even if it were allowed to.
+#  - The app (Python) and the engine run together in a firejail sandbox with no network.
+# If anything fails, ASKus AI is skipped and the rest of the ISO still builds.
+set -u
+export DEBIAN_FRONTEND=noninteractive
+LIB=/usr/local/lib/askus-ai
+. "$LIB/PINS"
+chmod 0755 /usr/local/bin/askus-ai 2>/dev/null
+T=$(mktemp -d)
+NEW_PKGS=()
+cleanup() {
+  rm -rf "$T"
+  [ ${#NEW_PKGS[@]} -gt 0 ] && apt-get purge -y "${NEW_PKGS[@]}" >/dev/null 2>&1
+  apt-get autoremove -y >/dev/null 2>&1
+}
+trap cleanup EXIT
+note() { echo "[askus] askus-ai: $*"; }
+
+BUILD_DEPS=(git build-essential cmake pkg-config libvulkan-dev glslc spirv-headers)
+RUN_DEPS=(libgomp1 libvulkan1 mesa-vulkan-drivers poppler-utils python3 firejail)
+for p in "${BUILD_DEPS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || NEW_PKGS+=("$p"); done
+apt-get install -y --no-install-recommends "${BUILD_DEPS[@]}" ca-certificates >/dev/null || { note "could not install build tools - skipped"; exit 0; }
+apt-get install -y --no-install-recommends "${RUN_DEPS[@]}" >/dev/null 2>&1 || note "some runtime packages missing"
+apt-mark manual "${RUN_DEPS[@]}" >/dev/null 2>&1
+
+git clone -q --depth 1 --branch "$LLAMA_TAG" "$LLAMA_REPO" "$T/src" || { note "download failed - skipped"; exit 0; }
+[ "$(git -C "$T/src" rev-parse HEAD)" = "$LLAMA_COMMIT" ] || { note "llama.cpp $LLAMA_TAG is not the pinned commit - refusing"; exit 0; }
+
+note "building the engine (CPU variants + Vulkan)"
+GPU=ON
+build() {
+  cmake -S "$T/src" -B "$T/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+    -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_NATIVE=OFF -DGGML_VULKAN="$GPU" \
+    -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
+    -DCMAKE_BUILD_RPATH='$ORIGIN' >"$T/cfg.log" 2>&1 &&
+  cmake --build "$T/build" -j"$(nproc)" --target llama-server >"$T/build.log" 2>&1
+}
+if ! build; then
+  note "GPU (Vulkan) build failed - building CPU only. Last lines:"; tail -n 20 "$T/build.log" | sed 's/^/[askus]   /'
+  rm -rf "$T/build"; GPU=OFF
+  build || { note "engine build FAILED - ASKus AI skipped. Last lines:"; tail -n 30 "$T/build.log" | sed 's/^/[askus]   /'; exit 0; }
+fi
+
+mkdir -p "$LIB/engine"
+cp -a "$T/build/bin/llama-server" "$T/build/bin/"*.so* "$LIB/engine/"
+chmod -R a+rX,go-w "$LIB"
+# remove the build folder and build tools first, then test it exactly as it will run in ASKus
+cleanup; trap - EXIT
+if missing=$(ldd "$LIB/engine/llama-server" "$LIB/engine/"*.so* 2>/dev/null | grep "not found"); then
+  note "missing libraries:"; echo "$missing" | sort -u | sed 's/^/[askus]   /'
+fi
+if [ -z "${missing:-}" ] && "$LIB/engine/llama-server" --version >/dev/null 2>&1 && "$LIB/engine/llama-server" --list-devices >/dev/null 2>&1; then
+  echo "$LLAMA_TAG vulkan=$GPU" > "$LIB/engine/ASKUS-VERSION"
+  note "engine installed ($LLAMA_TAG, Vulkan $GPU)"
+else
+  rm -rf "$LIB/engine"; note "engine doesn't start - ASKus AI skipped"
+fi
