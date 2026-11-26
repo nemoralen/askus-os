@@ -4,8 +4,9 @@ streams, the secret is enforced, and there is no network. Usage: askus-ai-check.
 import json, socket, subprocess, sys, time, urllib.request
 data, engine = sys.argv[1], sys.argv[2]
 p = subprocess.Popen([sys.executable, "-I", "/usr/local/lib/askus-ai/app/app.py", "--data", data, "--engine", engine,
-                      "--window", "none"], stdout=subprocess.PIPE, text=True)
+                      "--window", "none", "--require-offline"], stdout=subprocess.PIPE, text=True)
 u = p.stdout.readline().strip()
+assert u.startswith("http://127.0.0.1:"), "app did not start (offline guard?) rc=%s" % p.poll()
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
     for _ in range(300):

@@ -296,7 +296,18 @@ def main():
     ap.add_argument("--data", required=True, help="folder for Models, Knowledge, Chats, Feedback")
     ap.add_argument("--engine", required=True, help="folder that contains llama-server")
     ap.add_argument("--window", default="none", choices=["askus", "edge", "none"])
+    ap.add_argument("--require-offline", action="store_true",
+                    help="refuse to start unless loopback is the only network interface (ASKus sandbox)")
     a = ap.parse_args()
+    if a.require_offline:
+        try:
+            with open("/proc/self/net/dev") as f:  # always this process's own network namespace
+                nics = sorted(l.split(":")[0].strip() for l in f.readlines()[2:] if ":" in l)
+        except OSError:
+            nics = ["?"]
+        if nics != ["lo"]:
+            print("ASKus AI: refusing to start, network interfaces visible: " + ", ".join(nics), file=sys.stderr)
+            sys.exit(3)
 
     paths = core.Paths(a.data, a.engine)
     state = State(paths)
