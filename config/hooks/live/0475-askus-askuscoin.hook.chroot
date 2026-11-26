@@ -59,8 +59,13 @@ if fetch "$ELECTRUM_REPO" "$ELECTRUM_TAG" "$ELECTRUM_COMMIT" "$T/electrum" && py
   E=/opt/electrum-askus
   rm -rf "$E"
   # Qt and cryptography come from Debian (security updates); everything else is hash-pinned by Electrum
+  # Same method as Electrum's own reproducible build: first its hash-pinned build tools
+  # (setuptools, poetry-core, flit-core...), then everything with --no-build-isolation, so pip
+  # never fetches an unpinned build tool. aiohttp & co. are built as pure Python (no Cython).
+  export AIOHTTP_NO_EXTENSIONS=1 YARL_NO_EXTENSIONS=1 MULTIDICT_NO_EXTENSIONS=1 FROZENLIST_NO_EXTENSIONS=1 PROPCACHE_NO_EXTENSIONS=1
   { python3 -m venv --system-site-packages "$E" &&
-    "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps -r "$T/electrum/contrib/deterministic-build/requirements.txt" &&
+    "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps --no-build-isolation -r "$T/electrum/contrib/deterministic-build/requirements-build-base.txt" &&
+    "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps --no-build-isolation -r "$T/electrum/contrib/deterministic-build/requirements.txt" &&
     "$E/bin/pip" install --no-cache-dir --no-deps --no-build-isolation "$T/electrum" &&
     ( cd / && "$E/bin/python3" -c "import electrum; from electrum import constants; assert constants.net.SEGWIT_HRP=='ask'" ); } \
     >"$T/electrum.log" 2>&1 &&

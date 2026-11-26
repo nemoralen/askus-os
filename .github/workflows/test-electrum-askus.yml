@@ -36,8 +36,10 @@ jobs:
           test "$(git -C "$T/electrum" rev-parse HEAD)" = "$ELECTRUM_COMMIT"
           python3 -B "$LIB/apply_electrum_askus.py" "$T/electrum"
           E=/opt/electrum-askus
+          export AIOHTTP_NO_EXTENSIONS=1 YARL_NO_EXTENSIONS=1 MULTIDICT_NO_EXTENSIONS=1 FROZENLIST_NO_EXTENSIONS=1 PROPCACHE_NO_EXTENSIONS=1
           python3 -m venv --system-site-packages "$E"
-          "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps -r "$T/electrum/contrib/deterministic-build/requirements.txt"
+          "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps --no-build-isolation -r "$T/electrum/contrib/deterministic-build/requirements-build-base.txt"
+          "$E/bin/pip" install --no-cache-dir --require-hashes --no-deps --no-build-isolation -r "$T/electrum/contrib/deterministic-build/requirements.txt"
           "$E/bin/pip" install --no-cache-dir --no-deps --no-build-isolation "$T/electrum"
           cd /
           "$E/bin/python3" -c "import electrum; from electrum import constants; assert constants.net.SEGWIT_HRP=='ask'; print('Electrum ASKus OK', constants.net.SEGWIT_HRP)"
