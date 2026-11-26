@@ -22,7 +22,7 @@ trap cleanup EXIT
 note() { echo "[askus] askus-ai: $*"; }
 
 BUILD_DEPS=(git build-essential cmake pkg-config libvulkan-dev glslc spirv-headers)
-RUN_DEPS=(libvulkan1 mesa-vulkan-drivers poppler-utils python3 firejail)
+RUN_DEPS=(libgomp1 libvulkan1 mesa-vulkan-drivers poppler-utils python3 firejail)
 for p in "${BUILD_DEPS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || NEW_PKGS+=("$p"); done
 apt-get install -y --no-install-recommends "${BUILD_DEPS[@]}" ca-certificates >/dev/null || { note "could not install build tools - skipped"; exit 0; }
 apt-get install -y --no-install-recommends "${RUN_DEPS[@]}" >/dev/null 2>&1 || note "some runtime packages missing"
@@ -49,8 +49,12 @@ fi
 mkdir -p "$LIB/engine"
 cp -a "$T/build/bin/llama-server" "$T/build/bin/"*.so* "$LIB/engine/"
 chmod -R a+rX,go-w "$LIB"
-rm -rf "$T/build"     # test it without the build folder, exactly as it will run in ASKus
-if "$LIB/engine/llama-server" --version >/dev/null 2>&1 && "$LIB/engine/llama-server" --list-devices >/dev/null 2>&1; then
+# remove the build folder and build tools first, then test it exactly as it will run in ASKus
+cleanup; trap - EXIT
+if missing=$(ldd "$LIB/engine/llama-server" "$LIB/engine/"*.so* 2>/dev/null | grep "not found"); then
+  note "missing libraries:"; echo "$missing" | sort -u | sed 's/^/[askus]   /'
+fi
+if [ -z "${missing:-}" ] && "$LIB/engine/llama-server" --version >/dev/null 2>&1 && "$LIB/engine/llama-server" --list-devices >/dev/null 2>&1; then
   echo "$LLAMA_TAG vulkan=$GPU" > "$LIB/engine/ASKUS-VERSION"
   note "engine installed ($LLAMA_TAG, Vulkan $GPU)"
 else
