@@ -1,0 +1,42 @@
+#!/bin/bash
+# ASKus AI launcher. The app and its AI engine run together in one firejail sandbox:
+#   - NO network at all (--net=none): not the internet, not Tor, not other computers.
+#     The engine listens on 127.0.0.1 inside the sandbox, where only the app can reach it.
+#   - It can only see its own folder:
+#       Persistent Storage unlocked -> ~/Persistent/ASKus AI (Models, Knowledge, Chats, Feedback)
+#       otherwise                   -> a folder in RAM, erased at shutdown (no models there)
+#   - No admin rights, no new privileges, system-call filter; Tor settings, Tor Browser,
+#     wallets and USB drives are out of sight.
+set -u
+APP=/usr/local/lib/askus-ai/app/app.py
+ENGINE=/usr/local/lib/askus-ai/engine
+
+if [ ! -x "$ENGINE/llama-server" ]; then
+  zenity --error --title="ASKus AI" --width=380 \
+    --text="The ASKus AI engine isn't in this build of ASKus OS.\n\nUpdate ASKus, or tell Claude." || true
+  exit 1
+fi
+
+if mountpoint -q "$HOME/Persistent"; then
+  DATA="$HOME/Persistent/ASKus AI"
+else
+  DATA="${XDG_RUNTIME_DIR:-/tmp}/askus-ai"
+  zenity --info --title="ASKus AI" --width=420 --timeout=12 \
+    --text="Persistent Storage is locked, so ASKus AI has no models and nothing will be kept.\n\nUnlock Persistent Storage on the Welcome screen (restart), then put the model files in <b>Persistent › ASKus AI › Models</b>." || true
+fi
+mkdir -p "$DATA/Models" "$DATA/Knowledge" "$DATA/Chats" "$DATA/Feedback"
+chmod 700 "$DATA"
+
+if ! command -v firejail >/dev/null 2>&1; then
+  zenity --question --title="ASKus AI" --width=400 --ok-label="Start without sandbox" --cancel-label="Cancel" \
+    --text="The sandbox (firejail) isn't installed, so ASKus AI would run with network access and could see your files." || exit 0
+  exec /usr/bin/python3 -I "$APP" --data "$DATA" --engine "$ENGINE" --window askus
+fi
+
+exec firejail --quiet --noprofile --name=askus-ai \
+  --net=none \
+  --whitelist="$DATA" \
+  --private-tmp --caps.drop=all --nonewprivs --nogroups --noroot --seccomp \
+  --blacklist=/run/askus --blacklist=/run/askus-tor --blacklist=/etc/tor --blacklist=/opt/tor-browser \
+  --blacklist=/media --blacklist=/mnt --blacklist=/run/media --blacklist=/run/live --blacklist=/var/lib/askus \
+  /usr/bin/python3 -I "$APP" --data "$DATA" --engine "$ENGINE" --window askus

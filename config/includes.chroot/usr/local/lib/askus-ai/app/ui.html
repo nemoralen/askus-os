@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASKus AI</title>
+<style>
+  :root { --g1:#064E3B; --g2:#059669; --g3:#10B981; --bg:#0b1411; --panel:#111c18; --line:#1f3a31;
+          --text:#e7f5ef; --dim:#9cb8ad; --user:#14532d; --ai:#16241f; --bad:#7f1d1d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font: 15px/1.5 "Inter", "Segoe UI", "Cantarell", system-ui, sans-serif; }
+  body { display:flex; flex-direction:column; border:3px solid var(--g2); }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px;
+           background:linear-gradient(90deg, var(--g1), var(--g2)); }
+  header .logo { font-weight:800; font-size:18px; letter-spacing:.3px; }
+  header .pill { font-size:12px; background:rgba(0,0,0,.25); padding:3px 10px; border-radius:99px; }
+  header .sp { flex:1; }
+  button { background:#1c2f28; color:var(--text); border:1px solid var(--line); border-radius:9px;
+           padding:7px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#24413a; }
+  button.primary { background:var(--g2); border-color:var(--g3); }
+  button.primary:hover { background:var(--g3); }
+  button:disabled { opacity:.45; cursor:default; }
+  header button { background:rgba(0,0,0,.22); border-color:rgba(255,255,255,.18); }
+  #status { padding:6px 16px; font-size:13px; color:var(--dim); border-bottom:1px solid var(--line); }
+  #status b { color:var(--text); font-weight:600; }
+  .bar { height:4px; background:var(--line); border-radius:4px; margin-top:4px; overflow:hidden; }
+  .bar > div { height:100%; background:var(--g3); width:0; }
+  main { flex:1; overflow-y:auto; padding:18px; }
+  .wrap { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+  .msg { padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; max-width:92%; }
+  .user { align-self:flex-end; background:var(--user); }
+  .ai { align-self:flex-start; background:var(--ai); border:1px solid var(--line); }
+  .err { align-self:flex-start; background:var(--bad); }
+  .msg pre { background:#06100d; padding:10px; border-radius:8px; overflow-x:auto; white-space:pre; }
+  .meta { font-size:12px; color:var(--dim); margin-top:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .meta button { padding:2px 8px; font-size:13px; }
+  .meta textarea { width:100%; min-height:60px; }
+  .thinking { color:var(--dim); font-style:italic; }
+  .hello { color:var(--dim); text-align:center; margin-top:8vh; }
+  .hello h1 { color:var(--text); margin:0 0 6px; font-size:26px; }
+  footer { border-top:1px solid var(--line); padding:10px 16px 14px; }
+  footer .row { max-width:820px; margin:0 auto; display:flex; gap:8px; align-items:flex-end; }
+  textarea { flex:1; resize:none; background:#0f1a16; color:var(--text); border:1px solid var(--line);
+             border-radius:12px; padding:10px 12px; font:inherit; min-height:46px; max-height:220px; }
+  textarea:focus { outline:2px solid var(--g2); }
+  .opts { max-width:820px; margin:6px auto 0; font-size:13px; color:var(--dim); display:flex; gap:16px; }
+  #drawer { position:fixed; top:0; right:0; bottom:0; width:min(460px, 100%); background:var(--panel);
+            border-left:2px solid var(--g2); padding:18px; overflow-y:auto; transform:translateX(105%);
+            transition:transform .2s; z-index:5; }
+  #drawer.open { transform:none; }
+  #drawer h2 { margin:0 0 10px; font-size:18px; }
+  #drawer h3 { margin:18px 0 6px; font-size:14px; color:var(--g3); text-transform:uppercase; letter-spacing:.5px; }
+  .model { border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-bottom:8px; }
+  .model .why { font-size:12px; color:var(--dim); }
+  .ok { color:#4ade80; } .no { color:#fca5a5; }
+  code.path { display:block; font-size:12px; background:#06100d; padding:4px 6px; border-radius:6px;
+              word-break:break-all; margin:2px 0 6px; }
+  .note { font-size:13px; color:var(--dim); }
+  #toast { position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:#052e22;
+           border:1px solid var(--g2); padding:8px 14px; border-radius:10px; display:none; z-index:9; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">ASKus AI</div>
+  <div class="pill" id="pill">Offline · on this computer</div>
+  <div class="sp"></div>
+  <button id="newBtn" title="Start a new chat (the current one is forgotten unless saved)">New chat</button>
+  <button id="saveBtn" title="Save this chat to your Chats folder">Save chat</button>
+  <button id="setBtn">Settings</button>
+</header>
+<div id="status">Starting…</div>
+<main id="main"><div class="wrap" id="msgs">
+  <div class="hello" id="hello"><h1>ASKus AI</h1>
+    Runs only on this computer. No account, no internet, nothing leaves the machine.<br>
+    Chats are forgotten when you close the window, unless you click <b>Save chat</b>.<br>
+    Put your own files in the <b>Knowledge</b> folder to teach it about them.</div>
+</div></main>
+<footer>
+  <div class="row">
+    <textarea id="input" rows="1" placeholder="Ask anything… (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button class="primary" id="send">Send</button>
+  </div>
+  <div class="opts">
+    <label><input type="checkbox" id="useKnow" checked> Use my Knowledge folder</label>
+    <label><input type="checkbox" id="think"> Think deeper (slower)</label>
+  </div>
+</footer>
+
+<div id="drawer">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2>Settings</h2><button id="closeSet">Close</button></div>
+  <h3>Model</h3>
+  <div id="models"></div>
+  <div class="note" id="hw"></div>
+  <h3>Knowledge folder</h3>
+  <div class="note" id="know"></div>
+  <code class="path" id="pKnow"></code>
+  <button id="reindex">Re-read Knowledge folder</button> <button class="openf" data-what="knowledge">Open folder</button>
+  <h3>Your folders</h3>
+  <div class="note">Models</div><code class="path" id="pModels"></code>
+  <div class="note">Saved chats</div><code class="path" id="pChats"></code>
+  <div class="note">Feedback (for training later)</div><code class="path" id="pFeed"></code>
+  <h3>Adding a model</h3>
+  <div class="note" id="howto"></div>
+  <h3>Privacy</h3>
+  <div class="note">The AI engine runs on this computer and listens only to this window. In ASKus OS
+    it runs in a sandbox with <b>no network at all</b>. What you type, your Knowledge files and
+    the answers never leave the computer. Saved chats and feedback stay in your folders
+    (in ASKus: inside encrypted Persistent Storage).</div>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const base = location.pathname.replace(/[^/]*$/, "");
+const $ = (id) => document.getElementById(id);
+let state = null, sending = false;
+
+function toast(t) { const el = $("toast"); el.textContent = t; el.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", 3500); }
+
+async function api(path, body) {
+  const r = await fetch(base + "api/" + path, { method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+// Model output is shown as plain text only (never as HTML); ``` blocks become <pre>.
+function render(el, text) {
+  el.textContent = "";
+  const parts = text.split("```");
+  parts.forEach((p, i) => {
+    if (i % 2 === 1) { const pre = document.createElement("pre");
+      pre.textContent = p.replace(/^[a-zA-Z0-9_+-]*\n/, ""); el.appendChild(pre); }
+    else el.appendChild(document.createTextNode(p));
+  });
+}
+
+function visible(text) {          // hide the model's private reasoning (<think>…</think>)
+  let t = text.replace(/<think>[\s\S]*?<\/think>\s*/g, "");
+  const open = t.indexOf("<think>");
+  return open >= 0 ? { text: t.slice(0, open), thinking: true } : { text: t, thinking: false };
+}
+
+function bubble(cls, text) {
+  $("hello")?.remove();
+  const d = document.createElement("div"); d.className = "msg " + cls;
+  render(d, text); $("msgs").appendChild(d); scrollEnd(); return d;
+}
+function scrollEnd() { const m = $("main"); m.scrollTop = m.scrollHeight; }
+
+function addFeedback(div, index) {
+  const meta = document.createElement("div"); meta.className = "meta";
+  const up = document.createElement("button"); up.textContent = "👍";
+  const down = document.createElement("button"); down.textContent = "👎";
+  const fix = document.createElement("button"); fix.textContent = "Correct it";
+  const send = async (rating, correction) => {
+    try { await api("feedback", { index, rating, correction: correction || "" });
+      meta.querySelectorAll("button").forEach(b => b.disabled = true); toast("Thanks - feedback saved."); }
+    catch (e) { toast(e.message); } };
+  up.onclick = () => send("up");
+  down.onclick = () => send("down");
+  fix.onclick = () => {
+    const ta = document.createElement("textarea"); ta.placeholder = "Write the better answer…";
+    const ok = document.createElement("button"); ok.textContent = "Save correction";
+    ok.onclick = () => send("down", ta.value); meta.append(ta, ok); ta.focus(); };
+  meta.append(up, down, fix); div.appendChild(meta);
+}
+
+async function sendMsg() {
+  const text = $("input").value.trim();
+  if (!text || sending) return;
+  if (!state || !state.model) { toast("No model is loaded yet - see Settings."); return; }
+  sending = true; $("send").disabled = true; $("input").value = ""; autosize();
+  bubble("user", text);
+  const ai = bubble("ai", ""); ai.classList.add("thinking"); ai.textContent = "…";
+  let full = "", sources = [];
+  try {
+    const r = await fetch(base + "api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, think: $("think").checked, knowledge: $("useKnow").checked }) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || "HTTP " + r.status); }
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!line.startsWith("data: ")) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.type === "sources") sources = ev.sources;
+        else if (ev.type === "token") { full += ev.text; const v = visible(full);
+          ai.classList.toggle("thinking", v.thinking && !v.text);
+          render(ai, v.text || (v.thinking ? "Thinking…" : "…")); scrollEnd(); }
+        else if (ev.type === "done") { ai.classList.remove("thinking"); render(ai, ev.answer);
+          if (sources.length) { const s = document.createElement("div"); s.className = "meta";
+            s.textContent = "From your Knowledge folder: " + sources.map((x, n) => `[${n + 1}] ${x}`).join("  ");
+            ai.appendChild(s); }
+          addFeedback(ai, ev.index); }
+        else if (ev.type === "error") throw new Error(ev.text);
+      }
+    }
+  } catch (e) { ai.className = "msg err"; ai.textContent = "Problem: " + e.message; }
+  sending = false; $("send").disabled = false; $("input").focus(); scrollEnd();
+}
+
+function autosize() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; }
+
+function showState(s) {
+  state = s;
+  const st = $("status"); st.textContent = "";
+  const b = document.createElement("b"); b.textContent = s.status; st.appendChild(b);
+  if (s.progress != null) { const bar = document.createElement("div"); bar.className = "bar";
+    const f = document.createElement("div"); f.style.width = s.progress + "%"; bar.appendChild(f); st.appendChild(bar); }
+  $("pill").textContent = s.engine ? "Offline · " + s.engine : "Offline · on this computer";
+  const box = $("models"); box.textContent = "";
+  s.models.forEach(m => {
+    const d = document.createElement("div"); d.className = "model";
+    const t = document.createElement("div"); t.textContent = m.name + (s.model === m.id ? "  ✓ in use" : "");
+    const w = document.createElement("div"); w.className = "why";
+    const span = document.createElement("span");
+    span.className = m.verified ? "ok" : (m.present ? "no" : "");
+    span.textContent = m.present ? (m.verified ? "Genuine · " : "") + m.why + ` · ${m.size_gb} GB` : `Not installed (${m.size_gb} GB) · file: ${m.file}`;
+    w.appendChild(span); d.append(t, w);
+    if (m.present && s.model !== m.id) {
+      const btn = document.createElement("button"); btn.disabled = s.busy;
+      btn.textContent = m.verified ? "Use this model" : "Check fingerprint";
+      btn.onclick = async () => { try { await api(m.verified ? "load" : "verify", { id: m.id }); } catch (e) { toast(e.message); } };
+      d.appendChild(btn);
+    }
+    box.appendChild(d);
+  });
+  const g = s.gpus.length ? s.gpus.map(x => `${x.name} (${Math.round(x.vram_mib / 1024)} GB)`).join(", ") : "none usable - runs on the processor";
+  $("hw").textContent = `This computer: ${s.ram_gb} GB memory · graphics: ${g}`;
+  $("know").textContent = `${s.knowledge.files} files read (${s.knowledge.chunks} passages)` +
+    (s.knowledge.skipped.length ? ` · couldn't read: ${s.knowledge.skipped.join(", ")}` : "");
+  $("pKnow").textContent = s.folders.knowledge; $("pModels").textContent = s.folders.models;
+  $("pChats").textContent = s.folders.chats; $("pFeed").textContent = s.folders.feedback;
+  $("howto").textContent = s.platform === "windows"
+    ? "Run \"Get models.ps1\" in the ASKus AI folder; it downloads each model from the official Qwen page on Hugging Face and checks its fingerprint."
+    : "Copy the .gguf files (and hashes.json) from the ASKus AI \"Models\" folder on your PC into Persistent › ASKus AI › Models, then open Settings again. Every file's fingerprint is checked before it is used.";
+  document.querySelectorAll(".openf").forEach(b => b.style.display = s.platform === "windows" ? "" : "none");
+}
+
+async function poll() { try { showState(await api("state")); } catch (e) { $("status").textContent = "Lost connection to ASKus AI."; } }
+
+$("send").onclick = sendMsg;
+$("input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+$("input").addEventListener("input", autosize);
+$("setBtn").onclick = () => $("drawer").classList.add("open");
+$("closeSet").onclick = () => $("drawer").classList.remove("open");
+$("newBtn").onclick = async () => { await api("new", {}); $("msgs").textContent = ""; toast("New chat started - the old one is forgotten."); };
+$("saveBtn").onclick = async () => { try { const r = await api("save", {}); toast("Saved: " + r.path.split(/[\\/]/).pop()); } catch (e) { toast(e.message); } };
+$("reindex").onclick = async () => { try { const r = await api("reindex", {}); toast(`Read ${r.files} files.`); poll(); } catch (e) { toast(e.message); } };
+document.querySelectorAll(".openf").forEach(b => b.onclick = () => api("open", { what: b.dataset.what }).catch(() => {}));
+poll(); setInterval(poll, 2000); $("input").focus();
+</script>
+</body>
+</html>

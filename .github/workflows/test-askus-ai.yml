@@ -1,0 +1,32 @@
+name: Test ASKus AI
+
+# Builds the ASKus AI engine in Debian 13 exactly as the ISO does, then runs the app with a
+# tiny random model inside a no-network sandbox. About 20 minutes instead of a full ISO build.
+on:
+  push:
+    paths:
+      - ".github/workflows/test-askus-ai.yml"
+      - "config/hooks/live/0490-askus-ai.hook.chroot"
+      - "config/includes.chroot/usr/local/lib/askus-ai/**"
+      - "config/includes.chroot/usr/local/bin/askus-ai"
+      - "tools/test-askus-ai.sh"
+      - "tools/askus-ai-check.py"
+      - "tools/make-tiny-gguf.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  askus-ai:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: debian:trixie
+      options: --privileged
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build engine and run ASKus AI in its sandbox
+        run: bash tools/test-askus-ai.sh

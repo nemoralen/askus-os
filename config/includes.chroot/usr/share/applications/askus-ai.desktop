@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ASKus AI
+GenericName=Private AI assistant
+Comment=A local AI that runs only on this computer - no account, no internet
+Exec=/usr/local/bin/askus-ai
+Icon=askus-ai
+Terminal=false
+Categories=Utility;Office;
+Keywords=AI;assistant;chat;LLM;local;offline;
+StartupWMClass=org.askus.MyApp.askus_ai

@@ -1,0 +1,4 @@
+# ASKus AI engine: llama.cpp built from this exact source commit (checked before building)
+LLAMA_REPO=https://github.com/ggml-org/llama.cpp
+LLAMA_TAG=b12782
+LLAMA_COMMIT=b671865c7bd44c8c2d4709b5f707bd55f7f612fd

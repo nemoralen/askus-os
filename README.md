@@ -156,6 +156,18 @@ Open **Leak Test** from the app grid (or run `askus-leak-test --text` in a termi
 
 ❌ means a real leak; ⚠️ usually means "Tor still connecting" or "running in a virtual machine".
 
+## ASKus AI (private AI, fully offline)
+A local AI that runs only on this computer: no account, no internet, nothing leaves the machine.
+- **Engine:** llama.cpp (`llama-server`), built from a pinned source commit. It uses the processor, or the graphics card through the open Vulkan drivers (including NVIDIA RTX cards through Mesa NVK), so kernel lockdown stays on.
+- **Sandbox:** the app and the engine run together in firejail with **no network at all**. They only see **Persistent › ASKus AI**.
+- **Models:** GGUF files only, in **Persistent › ASKus AI › Models**. Every file's SHA-256 fingerprint is checked before it's used.
+  - Qwen3 4B is the default on any PC.
+  - 8B or 14B are picked automatically when the computer has a strong enough GPU (you can also choose in Settings).
+  - Copy the files in from the Windows test version (`F:\Claude Programs\ASKus AI\data\Models`, including `hashes.json`).
+- **Knowledge:** put .txt, .md, .csv or .pdf files in **Persistent › ASKus AI › Knowledge**. ASKus AI searches them before answering and cites them; nothing is trained.
+- **History:** kept in memory only and forgotten when you close the window. **Save chat** writes it to **Persistent › ASKus AI › Chats** (encrypted with Persistent Storage).
+- **Feedback:** 👍 / 👎 and corrections go to **Persistent › ASKus AI › Feedback** (`feedback.jsonl`), for fine-tuning later on your own computer.
+
 ## Anonymous / Personal session
 Choose on the Welcome screen at startup (switching needs a restart, so the two never mix):
 - **Anonymous** (default): Tor Browser only. The Everyday Browser, where you log in as yourself, is off.

@@ -19,7 +19,7 @@ COMMON=(--quiet --noprofile --caps.drop=all --nonewprivs --nogroups
 # Secrets no sandboxed app needs. Firejail ignores entries that don't exist.
 SECRETS=("$HOME/.gnupg" "$HOME/.ssh" "$HOME/.thunderbird" "$HOME/.config/keepassxc"
          "$P/.everyday-browser" "$P/My Apps" "$P/.askus-assistant" "$P/.gnupg" "$P/.thunderbird"
-         "$P/*.kdbx" "$P/*/*.kdbx" "$HOME/*.kdbx" "/opt/tor-browser")
+         "$P/*.kdbx" "$P/*/*.kdbx" "$HOME/*.kdbx" "/opt/tor-browser" "$P/ASKus AI")
 WALLETS=("$HOME/.electrum" "$HOME/.electrum-askus" "$HOME/.askuscoin" "$HOME/.feather"
          "$HOME/.config/feather" "$HOME/Monero" "$P/.electrum" "$P/.electrum-askus" "$P/.askuscoin")
 
