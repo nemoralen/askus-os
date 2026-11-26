@@ -9,7 +9,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 INC=$REPO/config/includes.chroot
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q --no-install-recommends git ca-certificates python3 python3-numpy python3-yaml firejail poppler-utils
+apt-get install -y -q --no-install-recommends git ca-certificates python3 python3-numpy python3-yaml firejail poppler-utils iproute2
 
 # 1. the hook, with its file paths pointed at this checkout
 mkdir -p /usr/local/lib/askus-ai /usr/local/bin
