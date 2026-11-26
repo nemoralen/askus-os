@@ -38,6 +38,6 @@ python3 -c "import hashlib,json,sys; h=hashlib.sha256(open(sys.argv[1],'rb').rea
 echo "Cabinet boxes use 3/4 inch plywood." > "$D/Knowledge/standards.md"
 cp "$REPO/tools/askus-ai-check.py" /home/tester/
 chown -R tester /home/tester
-unshare --net su tester -c "python3 -I /home/tester/askus-ai-check.py $D $E" || {
+unshare --net sh -c "ip link set lo up && su tester -c 'python3 -I /home/tester/askus-ai-check.py $D $E'" || {
     echo "== app/engine log"; cat "$D/.engine.log" 2>/dev/null; exit 1; }
 echo "ASKus AI test passed"
